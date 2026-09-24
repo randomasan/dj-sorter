@@ -72,6 +72,6 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 2. Открой **SQL Editor**, вставь `db/schema.sql` целиком и нажми **Run**.
 3. **Edge Functions** → **Deploy a new function** → **Via Editor**. Имя `sync`, код возьми из `supabase/functions/sync/index.ts` → **Deploy**.
 4. В настройках функции `sync` выключи **Verify JWT** (enforce JWT verification): доступ проверяется по Spotify-токену.
-5. В **Project Settings → API Keys** скопируй Project URL и publishable key в `docs/index.html` → `SB_URL`, `SB_KEY`.
+5. В **Project Settings → API Keys** скопируй Project URL и publishable key в `docs/index.html` → `SB_URL`, `SB_KEY`. Слаг функции (последний кусок её URL) впиши в `SB_FN`.
 
 Без ключей приложение работает как раньше, только на localStorage.

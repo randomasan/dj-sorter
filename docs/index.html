@@ -233,6 +233,7 @@ async function sp(url, {maxWait=60000} = {}){
 // Публичные значения (Project URL + publishable/anon key). Пусто → работаем без БД, только localStorage.
 const SB_URL = 'https://vnmdnmvogwxqloaxbenk.supabase.co';
 const SB_KEY = 'sb_publishable_gMOOPy8pKjgJKaOAc-1uaQ_2MzRIg9Y';
+const SB_FN  = 'super-handler'; // slug Edge Function `sync` (URL задаётся слагом, не именем)
 const DB_ON = () => !!(SB_URL && SB_KEY);
 async function sb(path, {method='GET', body, prefer}={}){
   NET.req++;
@@ -277,7 +278,7 @@ async function stepDbPull(tracks){
 // Запись — только через Edge Function `sync`: она проверяет Spotify-токен и пишет service-ключом.
 async function sbSync(payload){
   NET.req++;
-  const r = await fetch(`${SB_URL}/functions/v1/sync`,{method:'POST',
+  const r = await fetch(`${SB_URL}/functions/v1/${SB_FN}`,{method:'POST',
     headers:{apikey:SB_KEY,'content-type':'application/json','x-spotify-token':await accessToken()},
     body:JSON.stringify(payload)});
   const j = await r.json().catch(()=>({}));
