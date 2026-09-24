@@ -15,7 +15,7 @@ const json = (d: unknown, status = 200) =>
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 // первая модель, которая ответит не 404, запоминается
-const MODELS = [Deno.env.get("GEMINI_MODEL"), "gemini-3.8-flash", "gemini-3-flash", "gemini-2.5-flash"].filter(Boolean) as string[];
+const MODELS = [Deno.env.get("GEMINI_MODEL"), "gemini-flash-latest", "gemini-3.8-flash", "gemini-3-flash", "gemini-2.5-flash"].filter(Boolean) as string[];
 let MODEL_OK: string | null = null;
 
 const ID = /^[A-Za-z0-9]{10,40}$/;
