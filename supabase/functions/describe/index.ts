@@ -41,21 +41,43 @@ const SCHEMA = {
   required: ["description", "instruments", "vocals", "mood", "energy", "danceability", "dj_slot"],
 };
 
+const UA = { "user-agent": "Mozilla/5.0 (DJ Sorter; +https://randomasan.github.io/dj-sorter/)", accept: "application/json" };
+const clean = (s: string) => String(s ?? "").replace(/\s*[-–(\[].*$/, "").trim();
+
+// Ищем 30-сек превью: Deezer (ISRC → точный поиск → простой поиск) → iTunes. Возвращаем и диагностику.
 // deno-lint-ignore no-explicit-any
-async function deezerFind(t: any) {
-  if (t.isrc && ISRC.test(t.isrc)) {
-    const r = await fetch(`https://api.deezer.com/track/isrc:${t.isrc}`);
-    const j = await r.json();
-    if (j?.preview) return { id: j.id, preview: j.preview, via: "isrc" };
+async function findPreview(t: any) {
+  const log: string[] = [];
+  const artist = t.artists?.[0] ?? "", title = clean(t.name);
+  // deno-lint-ignore no-explicit-any
+  const dz = async (url: string, tag: string): Promise<any> => {
+    try {
+      const r = await fetch(url, { headers: UA });
+      const j = await r.json();
+      if (j?.error) { log.push(`${tag}: ${j.error.type ?? ""} ${j.error.message ?? ""}`.trim()); return null; }
+      const hit = j?.data ? j.data[0] : j;
+      if (hit?.preview) return { src: "deezer", id: hit.id, preview: hit.preview, via: tag };
+      log.push(`${tag}: ${r.status} ${j?.data ? `${j.data.length} hits` : "no preview"}`);
+    } catch (e) { log.push(`${tag}: ${(e as Error).message}`); }
+    return null;
+  };
+  let hit = null;
+  if (t.isrc && ISRC.test(t.isrc)) hit = await dz(`https://api.deezer.com/track/isrc:${t.isrc}`, "dz-isrc");
+  hit ??= await dz(`https://api.deezer.com/search?limit=1&q=${encodeURIComponent(`artist:"${artist}" track:"${title}"`)}`, "dz-strict");
+  hit ??= await dz(`https://api.deezer.com/search?limit=1&q=${encodeURIComponent(`${artist} ${title}`)}`, "dz-loose");
+  if (!hit) {
+    try {
+      const r = await fetch(`https://itunes.apple.com/search?media=music&entity=song&limit=1&term=${encodeURIComponent(`${artist} ${title}`)}`, { headers: UA });
+      const j = await r.json();
+      const it = j?.results?.[0];
+      if (it?.previewUrl) hit = { src: "itunes", id: it.trackId, preview: it.previewUrl, via: "itunes" };
+      else log.push(`itunes: ${r.status} ${j?.resultCount ?? "?"} hits`);
+    } catch (e) { log.push(`itunes: ${(e as Error).message}`); }
   }
-  const q = `artist:"${t.artists?.[0] ?? ""}" track:"${String(t.name ?? "").replace(/\s*[-(].*$/, "")}"`;
-  const r = await fetch(`https://api.deezer.com/search?limit=1&q=${encodeURIComponent(q)}`);
-  const j = await r.json();
-  const hit = j?.data?.[0];
-  return hit?.preview ? { id: hit.id, preview: hit.preview, via: "search" } : null;
+  return { hit, log };
 }
 
-async function gemini(b64: string) {
+async function gemini(b64: string, mime: string) {
   const models = MODEL_OK ? [MODEL_OK] : MODELS;
   let last = "";
   for (const m of models) {
@@ -63,7 +85,7 @@ async function gemini(b64: string) {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify({
-        contents: [{ parts: [{ inline_data: { mime_type: "audio/mpeg", data: b64 } }, { text: PROMPT }] }],
+        contents: [{ parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: PROMPT }] }],
         generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0.2 },
       }),
     });
@@ -95,13 +117,14 @@ Deno.serve(async (req) => {
     const results = [];
     for (const t of batch) {
       try {
-        const dz = await deezerFind(t);
-        if (!dz) { results.push({ id: t.id, error: "no deezer preview" }); continue; }
-        const audio = await fetch(dz.preview);
-        if (!audio.ok) { results.push({ id: t.id, error: `preview ${audio.status}` }); continue; }
+        const { hit, log } = await findPreview(t);
+        if (!hit) { results.push({ id: t.id, error: `no preview (${log.join(" | ")})` }); continue; }
+        const audio = await fetch(hit.preview, { headers: UA });
+        if (!audio.ok) { results.push({ id: t.id, error: `preview ${hit.src} ${audio.status}` }); continue; }
+        const mime = (audio.headers.get("content-type") ?? "").split(";")[0] || (hit.src === "itunes" ? "audio/mp4" : "audio/mpeg");
         const b64 = encodeBase64(new Uint8Array(await audio.arrayBuffer()));
-        const g = await gemini(b64);
-        const ai = { ...g.data, _model: g.model, _deezer: dz.id, _via: dz.via, _at: new Date().toISOString() };
+        const g = await gemini(b64, mime.startsWith("audio/") ? mime : "audio/mpeg");
+        const ai = { ...g.data, _model: g.model, _src: hit.src, _src_id: hit.id, _via: hit.via, _at: new Date().toISOString() };
         const { error } = await db.from("tracks").update({ ai }).eq("spotify_id", t.id);
         results.push({ id: t.id, ai, saved: !error, db_error: error?.message });
       } catch (e) {

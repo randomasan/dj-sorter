@@ -77,7 +77,7 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 
 ## AI-описание трека (Edge Function `describe`)
 
-Берёт 30-секундное превью трека из Deezer (по ISRC, иначе поиском), отдаёт его Gemini: модель слушает аудио и возвращает JSON с описанием, инструментами, вокалом, mood, энергией, слотом и заметками по сведению. Результат пишется в `tracks.ai`.
+Берёт 30-секундное превью трека: Deezer (ISRC → точный поиск → простой поиск), если не нашлось — iTunes Search API, отдаёт его Gemini: модель слушает аудио и возвращает JSON с описанием, инструментами, вокалом, mood, энергией, слотом и заметками по сведению. Результат пишется в `tracks.ai`.
 
 1. В SQL Editor выполни `alter table tracks add column if not exists ai jsonb;` (строка уже есть в конце `db/schema.sql`).
 2. В **Edge Functions → Secrets** добавь `GEMINI_API_KEY`. Опционально `GEMINI_MODEL`, по умолчанию функция пробует gemini-flash-latest → 3.8-flash → 3-flash → 2.5-flash.
