@@ -24,7 +24,7 @@ Jev не слушает аудио, он судит по названию, ар�
 ## Структура
 
 ```
-public/index.html   — весь фронт (vanilla JS)
+docs/index.html   — весь фронт (vanilla JS)
 src/worker.js       — /api/health, /api/features (прокси ReccoBeats), /api/classify (Jev)
 wrangler.jsonc      — конфиг Cloudflare Worker (static assets + AI binding)
 ```
@@ -52,7 +52,7 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 
 Для Spotify redirect локально используй `http://127.0.0.1:8787/`: Spotify не принимает `localhost`.
 
-Если открыть `public/index.html` без Worker, работают Spotify и ReccoBeats напрямую, а Jev выключается.
+Если открыть `docs/index.html` без Worker, работают Spotify и ReccoBeats напрямую, а Jev выключается.
 
 ## Настройка Jev
 
