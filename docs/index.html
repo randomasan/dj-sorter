@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DJ Sorter</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
 <style>
   :root{--bg:#f3f5f2;--fg:#15181c;--mut:#5d6570;--acc:#138a3e;--acc-fg:#fff;--line:#d5dad6;--card:#fff;--warn:#fff4d6;--warn-fg:#6b4e00}
   @media (prefers-color-scheme: dark){:root{--bg:#0f1115;--fg:#e8e8ea;--mut:#8a8f98;--acc:#1db954;--acc-fg:#000;--line:#23262d;--card:#161920;--warn:#2a2410;--warn-fg:#e6c56a;color-scheme:dark}}
@@ -33,6 +34,9 @@
   .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:4px 0}
   .bar i{display:block;height:100%;background:var(--acc);transition:width .3s}
   .step.paused .bar i{background:var(--warn-fg)}
+  .viz{position:relative;height:260px;margin:-12px -12px 12px;border-radius:8px 8px 0 0;overflow:hidden;background:#141414}
+  .viz canvas{display:block;width:100%;height:100%}
+  .vizCap{position:absolute;left:12px;bottom:10px;right:12px;color:#33fff1;font-size:11px;letter-spacing:.04em;text-shadow:0 0 8px rgba(51,255,241,.5);pointer-events:none}
   .grp{border-top:1px dashed var(--line);margin-top:10px}
   #aiLog,#dbgLog{max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:6px}
   .sm{font-size:11px} button.sm{padding:2px 8px}
@@ -64,6 +68,7 @@
   </div>
   <div id="status"></div>
   <section id="pipe" hidden>
+    <div class="viz"><canvas id="loaderViz" aria-hidden="true"></canvas><div class="vizCap" id="vizCap"></div></div>
     <div class="row" style="justify-content:space-between;margin-bottom:6px">
       <b>Данные</b><span class="mut sm" id="pipeNet"></span><button id="pipeToggle" class="sm">свернуть</button>
     </div>
@@ -689,7 +694,7 @@ async function aiDescribe(n){
   if(!SB_DESCRIBE_FN || !LIB.length) return;
   const pick = LIB.filter(t=>!t.ai).sort((a,b)=>(!!b.isrc)-(!!a.isrc)||Math.random()-.5).slice(0,n);
   if(!pick.length){ aiHave(); return; }
-  AI_STOP=false; ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=true); $('#aiStop').disabled=false;
+  AI_STOP=false; AI_RUNNING=true; ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=true); $('#aiStop').disabled=false;
   const c = {tried:0, found:0, miss:0, ok:0, gfail:0, saved:0, pauses:0};
   const now=Date.now();
   AIP.set('preview',{status:'run',total:pick.length,done:0,note:'',t0:now,t1:0});
@@ -733,7 +738,7 @@ async function aiDescribe(n){
   AIP.set('gemini',  {...fin(c.gfail&&!c.ok?'err':(left?'paused':'done')), note:`описано ${c.ok}${c.gfail?` · ошибок ${c.gfail}`:''}${left?` · не дошли ${left}${AI_STOP?' (стоп)':''}`:''}`});
   AIP.set('save',    fin(c.ok&&c.saved<c.ok?'err':'done'));
   LS.set('lib',LIB); renderList(); aiHave();
-  ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=false); $('#aiStop').disabled=true;
+  ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=false); $('#aiStop').disabled=true; AI_RUNNING=false;
 }
 
 /* ================= wiring ================= */
@@ -758,6 +763,12 @@ $('#aiLogCopy').onclick = e => { e.preventDefault(); copyText(dbgHeader()+'\n'+a
 $('#dbgCopy').onclick = e => { e.preventDefault(); copyText(dbgHeader()+'\n'+DBG.join('\n'), e.target); };
 $('#pipeToggle').onclick = () => { const h=!$('#pipeRows').hidden; $('#pipeRows').hidden=h; $('#aiGrp').hidden=h; $('#normGrp').hidden=h; $('#dbgWrap').hidden=h; $('#pipeToggle').textContent=h?'развернуть':'свернуть'; };
 setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
+let AI_RUNNING=false;
+setInterval(()=>{ // визуал: быстрее, когда что-то грузится; подпись = текущий статус
+  const busy = PIPE_RUNNING || AI_RUNNING;
+  window.LOADER?.setActive(busy);
+  const cap=$('#vizCap'); if(cap) cap.textContent = busy ? ($('#status').textContent||'loading…') : `${LIB.length.toLocaleString()} tracks · ${LIB.filter(t=>t.bpm).length.toLocaleString()} bpm · ${LIB.filter(t=>t.ai).length.toLocaleString()} ai`;
+}, 400);
 
 (async()=>{
   try{
@@ -770,6 +781,10 @@ setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
     }
   }catch(e){ status('Ошибка: '+e.message); console.error(e); }
 })();
+</script>
+<script type="module">
+  import { mountLoader } from './loader.js';
+  try { window.LOADER = mountLoader(document.getElementById('loaderViz')); } catch(e){ console.warn('loader viz', e); }
 </script>
 </body>
 </html>
