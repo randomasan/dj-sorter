@@ -40,3 +40,6 @@ grant select on tracks to anon, authenticated;
 -- Жанры/стили выпилены. Если таблица создана старой версией схемы — колонки можно удалить
 -- (ПОСЛЕ передеплоя функции sync новой версией):
 -- alter table tracks drop column if exists genres, drop column if exists styles;
+
+-- AI-описание трека (Edge Function describe: превью Deezer → Gemini)
+alter table tracks add column if not exists ai jsonb;

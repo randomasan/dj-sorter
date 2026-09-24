@@ -74,3 +74,13 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 5. В **Project Settings → API Keys** скопируй Project URL и publishable key в `docs/index.html` → `SB_URL`, `SB_KEY`. Слаг функции (последний кусок её URL) впиши в `SB_FN`.
 
 Без ключей приложение работает как раньше, только на localStorage.
+
+## AI-описание трека (Edge Function `describe`)
+
+Берёт 30-секундное превью трека из Deezer (по ISRC, иначе поиском), отдаёт его Gemini: модель слушает аудио и возвращает JSON с описанием, инструментами, вокалом, mood, энергией, слотом и заметками по сведению. Результат пишется в `tracks.ai`.
+
+1. В SQL Editor выполни `alter table tracks add column if not exists ai jsonb;` (строка уже есть в конце `db/schema.sql`).
+2. В **Edge Functions → Secrets** добавь `GEMINI_API_KEY`. Опционально `GEMINI_MODEL`, по умолчанию функция пробует gemini-3.8-flash → 3-flash → 2.5-flash.
+3. Задеплой `supabase/functions/describe/index.ts` через редактор и выключи Verify JWT.
+4. Впиши слаг функции в `docs/index.html` → `SB_DESCRIBE_FN`.
+5. На сайте нажми кнопку «🔬 AI-описание: 10 треков».

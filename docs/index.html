@@ -90,6 +90,11 @@
         <label class="mut"><input type="checkbox" id="group" checked style="flex:0"> группировать</label>
         <input id="q" placeholder="filter…" style="flex:0 1 180px">
       </div>
+      <div class="row" style="margin-top:10px">
+        <button id="aiRun">🔬 AI-описание: 10 треков (тест)</button>
+        <span class="mut sm" id="aiHint">Deezer превью → Gemini слушает трек → текст в базу</span>
+      </div>
+      <pre id="aiOut" hidden></pre>
       <pre id="list"></pre>
     </section>
 
@@ -230,7 +235,8 @@ async function sp(url, {maxWait=60000} = {}){
 // Публичные значения (Project URL + publishable/anon key). Пусто → работаем без БД, только localStorage.
 const SB_URL = 'https://vnmdnmvogwxqloaxbenk.supabase.co';
 const SB_KEY = 'sb_publishable_gMOOPy8pKjgJKaOAc-1uaQ_2MzRIg9Y';
-const SB_FN  = 'super-handler'; // slug Edge Function `sync` (URL задаётся слагом, не именем)
+const SB_FN  = 'super-handler';
+const SB_DESCRIBE_FN = ''; // slug Edge Function `describe` (Deezer превью → Gemini) // slug Edge Function `sync` (URL задаётся слагом, не именем)
 const DB_ON = () => !!(SB_URL && SB_KEY);
 async function sb(path, {method='GET', body, prefer}={}){
   NET.req++;
@@ -260,6 +266,7 @@ async function stepDbPull(tracks){
       const t = byId[r.spotify_id]; if(!t) continue; hits++;
       if(r.features_checked) feat[r.spotify_id] = r.bpm!=null ? {bpm:r.bpm,key:r.musical_key,mode:r.mode,energyAudio:r.energy} : null;
       if(r.jev && !jev[r.spotify_id]) jev[r.spotify_id] = r.jev;
+      if(r.ai) t.ai = r.ai;
     }
     seen += ids.length;
     PIPE.set('db',{done:seen, note:`найдено в базе: ${hits}`});
@@ -333,7 +340,7 @@ async function stepLikes(total){
   while(url){
     const j = await sp(url);
     for(const it of j.items){ const t=it.track; if(!t||!t.id) continue;
-      out.push({id:t.id,name:t.name,artists:t.artists.map(a=>a.name),artistIds:t.artists.map(a=>a.id),added:it.added_at}); }
+      out.push({id:t.id,name:t.name,artists:t.artists.map(a=>a.name),artistIds:t.artists.map(a=>a.id),added:it.added_at,isrc:t.external_ids?.isrc||null}); }
     PIPE.set('likes',{done:out.length});
     url = j.next;
   }
@@ -441,7 +448,7 @@ function line(t){
   const c = camStr(camelot(t.key,t.mode));
   const e = energyOf(t);
   const jev = t.jev ? `${unsure(t)}${t.jev.mood||''} · E${e!=null?e.toFixed(1):'?'}${t.jev.vocal>0.6?' · vox':''}` : '';
-  return `${String(t.bpm??'—').padStart(3)} bpm  ${c.padStart(3)} ${keyName(t).padEnd(3)}  ${t.artists.join(', ')} — ${t.name}   [${jev}]`;
+  return `${t.ai?'🔬':'  '}${String(t.bpm??'—').padStart(3)} bpm  ${c.padStart(3)} ${keyName(t).padEnd(3)}  ${t.artists.join(', ')} — ${t.name}   [${jev}]`;
 }
 const byBpm = (a,b)=>(a.bpm??999)-(b.bpm??999);
 const SLOT_ORDER = {warmup:0,build:1,peak:2,cooldown:3};
@@ -526,6 +533,35 @@ function seedPrompt(){
   ].join('\n');
 }
 
+/* ================= AI describe (Edge Function) ================= */
+function fmtAi(t){
+  const a=t.ai; if(!a) return '';
+  return `${t.artists.join(', ')} — ${t.name}\n  ${a.description||''}\n  mood: ${(a.mood||[]).join(', ')} · energy ${a.energy??'?'} · dance ${a.danceability??'?'} · slot ${a.dj_slot||'?'}\n  vocals: ${a.vocals||'?'} · instruments: ${(a.instruments||[]).join(', ')}\n  ~${a.tempo_bpm??'?'} bpm · ${a.key||'?'}${a.mix_notes?`\n  mix: ${a.mix_notes}`:''}`;
+}
+async function aiDescribe(n=10){
+  const out=$('#aiOut'); out.hidden=false;
+  if(!SB_DESCRIBE_FN){ out.textContent='Функция describe ещё не подключена (SB_DESCRIBE_FN пустой).'; return; }
+  const pick = LIB.filter(t=>!t.ai).sort((a,b)=>(!!b.isrc)-(!!a.isrc)||Math.random()-.5).slice(0,n);
+  if(!pick.length){ out.textContent='Все треки уже описаны.'; return; }
+  $('#aiRun').disabled=true; const lines=[]; let ok=0, fail=0;
+  for(const part of chunks(pick,5)){
+    out.textContent = `Слушаю ${ok+fail+1}–${Math.min(ok+fail+part.length,pick.length)} из ${pick.length}… (~10 с на трек)\n\n`+lines.join('\n\n');
+    try{
+      NET.req++;
+      const r = await fetch(`${SB_URL}/functions/v1/${SB_DESCRIBE_FN}`,{method:'POST',
+        headers:{apikey:SB_KEY,'content-type':'application/json','x-spotify-token':await accessToken()},
+        body:JSON.stringify({tracks:part.map(t=>({id:t.id,name:t.name,artists:t.artists,isrc:t.isrc}))})});
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(`${r.status}: ${j.error||''}`);
+      for(const x of j.results||[]){ const t=part.find(p=>p.id===x.id); if(!t) continue;
+        if(x.ai){ t.ai=x.ai; ok++; lines.push('✅ '+fmtAi(t)); } else { fail++; lines.push(`✖ ${t.artists[0]} — ${t.name}: ${x.error}`); } }
+    }catch(e){ fail+=part.length; lines.push('✖ батч упал: '+e.message); }
+  }
+  LS.set('lib',LIB); renderList();
+  out.textContent = `Готово: описано ${ok}, не вышло ${fail}\n\n`+lines.join('\n\n');
+  $('#aiRun').disabled=false;
+}
+
 /* ================= wiring ================= */
 function showApp(tracks){ LIB=tracks; $('#app').hidden=false; renderList(); renderSet(); }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
@@ -540,6 +576,7 @@ $('#demo').onclick = () => { status('Demo: 60 фейковых треков (с 
 $('#logout').onclick = () => { ['tok','lib','pkce.verifier','me'].forEach(LS.del); location.reload(); };
 $('#reload').onclick = () => runPipeline({refetchLikes:true});
 $('#reclassify').onclick = async () => { try{ await classifyJev(LIB,true); LS.set('lib',LIB); showApp(LIB); status('Jev: переразмечено');}catch(e){status('Ошибка: '+e.message)} };
+$('#aiRun').onclick = () => aiDescribe(10);
 $('#pipeToggle').onclick = () => { $('#pipeRows').hidden = !$('#pipeRows').hidden; };
 setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
 
