@@ -1,4 +1,4 @@
--- DJ Sorter — Supabase schema (вставить целиком в SQL Editor → Run)
+-- DJ Sorter — Supabase schema (вставить целиком в SQL Editor → Run; можно запускать повторно)
 
 create table if not exists tracks (
   spotify_id       text primary key,
@@ -19,16 +19,22 @@ create table if not exists tracks (
 create table if not exists users (
   spotify_id   text primary key,
   display_name text,
-  liked_ids    text[],           -- лайки пользователя (порядок = как в Spotify)
+  liked_ids    text[],
   created_at   timestamptz default now(),
   last_seen    timestamptz default now()
 );
 
--- MVP: открытый доступ для публичного ключа (фронт статический, своей авторизации нет)
+-- Доступ:
+--   tracks: публичный ключ может только ЧИТАТЬ (это общий кэш параметров треков)
+--   users:  публичный ключ не видит вообще
+--   запись в обе таблицы — только Edge Function `sync` (service role), после проверки Spotify-токена
 alter table tracks enable row level security;
 alter table users  enable row level security;
-drop policy if exists open_all on tracks;
-drop policy if exists open_all on users;
-create policy open_all on tracks for all using (true) with check (true);
-create policy open_all on users  for all using (true) with check (true);
-grant select, insert, update on tracks, users to anon;
+
+drop policy if exists open_all    on tracks;
+drop policy if exists open_all    on users;
+drop policy if exists public_read on tracks;
+create policy public_read on tracks for select using (true);
+
+revoke all on tracks, users from anon, authenticated;
+grant select on tracks to anon, authenticated;

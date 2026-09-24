@@ -60,10 +60,18 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 
 ## База (Supabase)
 
-Две таблицы: `tracks` хранит спарсенные треки с параметрами (общие для всех пользователей), `users` хранит пользователей и их лайки. Схема лежит в `db/schema.sql`.
+Две таблицы: `tracks` хранит спарсенные треки с параметрами (общие для всех), `users` хранит пользователей и их лайки. Схема лежит в `db/schema.sql`.
 
+Доступ:
+- `tracks` публичный ключ может только **читать**;
+- `users` публичному ключу не видна вообще;
+- **писать** в обе таблицы может только Edge Function `sync` (`supabase/functions/sync`). Она проверяет Spotify-токен пользователя через `/v1/me` и пишет service-ключом. Пользователь может записать только свою строку в `users`.
+
+Настройка:
 1. На supabase.com создай проект, регион Frankfurt.
 2. Открой **SQL Editor**, вставь `db/schema.sql` целиком и нажми **Run**.
-3. В **Project Settings → API** скопируй Project URL и publishable (anon) key в `docs/index.html` → `SB_URL`, `SB_KEY`.
+3. **Edge Functions** → **Deploy a new function** → **Via Editor**. Имя `sync`, код возьми из `supabase/functions/sync/index.ts` → **Deploy**.
+4. В настройках функции `sync` выключи **Verify JWT** (enforce JWT verification): доступ проверяется по Spotify-токену.
+5. В **Project Settings → API Keys** скопируй Project URL и publishable key в `docs/index.html` → `SB_URL`, `SB_KEY`.
 
 Без ключей приложение работает как раньше, только на localStorage.

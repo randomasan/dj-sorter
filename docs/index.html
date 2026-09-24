@@ -274,22 +274,28 @@ async function stepDbPull(tracks){
     if(a in gen) t.genres=gen[a]; if(n in sty){ t.styles=sty[n]; t.stylesLf=true; } if(jev[t.id]) t.jev=jev[t.id]; });
   PIPE.finish('db','done',`найдено в базе: ${hits} из ${tracks.length}`);
 }
+// Запись — только через Edge Function `sync`: она проверяет Spotify-токен и пишет service-ключом.
+async function sbSync(payload){
+  NET.req++;
+  const r = await fetch(`${SB_URL}/functions/v1/sync`,{method:'POST',
+    headers:{apikey:SB_KEY,'content-type':'application/json','x-spotify-token':await accessToken()},
+    body:JSON.stringify(payload)});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok){ NET.errors++; throw new Error(`sync ${r.status}: ${j.error||''}`); }
+  return j;
+}
 async function dbPush(tracks){
   if(!DB_ON()) return;
   try{
-    for(const part of chunks(tracks.map(toRow),500))
-      await sb('tracks?on_conflict=spotify_id',{method:'POST',body:part,prefer:'resolution=merge-duplicates,return=minimal'});
-    PIPE.set('db',{note:`сохранено в базу: ${tracks.length}`});
+    let saved=0;
+    for(const part of chunks(tracks.map(toRow),500)) saved += (await sbSync({tracks:part})).saved||0;
+    PIPE.set('db',{note:`сохранено в базу: ${saved}`});
   }catch(e){ PIPE.set('db',{status:'err',note:e.message}); }
 }
 async function dbUpsertUser(tracks){
   if(!DB_ON()) return;
-  try{
-    let me = LS.get('me');
-    if(!me){ const j = await sp('/me'); me = {id:j.id, name:j.display_name||j.id}; LS.set('me',me); }
-    await sb('users?on_conflict=spotify_id',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',
-      body:[{spotify_id:me.id, display_name:me.name, liked_ids:tracks.map(t=>t.id), last_seen:new Date().toISOString()}]});
-  }catch(e){ console.warn('user upsert',e); }
+  try{ const j = await sbSync({liked_ids:tracks.map(t=>t.id)}); LS.set('me',{id:j.user,name:j.display_name}); }
+  catch(e){ console.warn('user upsert',e); }
 }
 
 /* ================= pipeline + loader ================= */
