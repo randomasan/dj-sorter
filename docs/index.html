@@ -34,7 +34,7 @@
   .bar i{display:block;height:100%;background:var(--acc);transition:width .3s}
   .step.paused .bar i{background:var(--warn-fg)}
   .grp{border-top:1px dashed var(--line);margin-top:10px}
-  #aiLog{max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:6px}
+  #aiLog,#dbgLog{max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:6px}
   .sm{font-size:11px} button.sm{padding:2px 8px}
   @keyframes spin{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion: reduce){.step.run .ic{animation:none}}
@@ -72,6 +72,7 @@
       <div class="row" style="margin:14px 0 6px"><b>Нормализация</b></div>
       <div id="normRows"></div>
     </div>
+    <details id="dbgWrap" class="grp"><summary class="sm" style="margin-top:10px">лог загрузки (отладка) <button id="dbgCopy" class="sm" type="button">📋 копировать всё</button></summary><pre id="dbgLog" class="sm">—</pre></details>
     <div id="aiGrp" class="grp">
       <div class="row" style="justify-content:space-between;margin:14px 0 6px">
         <b>AI-describer</b>
@@ -80,7 +81,7 @@
         </span>
       </div>
       <div id="aiRows"></div>
-      <details id="aiLogWrap"><summary class="sm">лог описаний</summary><pre id="aiLog">пока пусто</pre></details>
+      <details id="aiLogWrap"><summary class="sm">лог описаний <button id="aiLogCopy" class="sm" type="button">📋 копировать</button></summary><pre id="aiLog">пока пусто</pre></details>
     </div>
   </section>
 
@@ -148,7 +149,7 @@ const REDIRECT = location.origin + location.pathname;
 if(!LS.get('cfg.clientId')) LS.set('cfg.clientId', DEFAULT_CLIENT_ID);
 const SCOPES = 'user-library-read';
 const $ = s => document.querySelector(s);
-const status = t => { $('#status').textContent = t; };
+const status = t => { $('#status').textContent = t; if(typeof dbg==='function') dbg('status: '+t); };
 let BACKEND = false; // есть ли наш Worker (/api)
 $('#redir').textContent = REDIRECT;
 $('#clientId').value = LS.get('cfg.clientId','');
@@ -215,6 +216,22 @@ async function accessToken(){
   return LS.get('tok').access;
 }
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
+/* ================= debug log ================= */
+const DBG = [];
+function dbg(msg){ const ts=new Date().toISOString().slice(11,19); DBG.push(`${ts} ${msg}`); if(DBG.length>2000) DBG.shift();
+  const el=document.getElementById('dbgLog'); if(el) el.textContent = DBG.slice(-400).join('\n'); }
+function dbgHeader(){
+  return [`DJ Sorter debug · ${new Date().toISOString()}`, `url: ${location.href}`, `ua: ${navigator.userAgent}`,
+    `tracks: ${LIB.length} · isrc: ${LIB.filter(t=>t.isrc).length} · bpm: ${LIB.filter(t=>t.bpm).length} · ai: ${LIB.filter(t=>t.ai).length}`,
+    `net: req ${NET.req} · 429 ${NET.r429} · err ${NET.errors}`, `db: ${DB_ON()?SB_URL:'off'} · sync: ${SB_FN} · describe: ${SB_DESCRIBE_FN||'off'}`, ''].join('\n');
+}
+async function copyText(text, btn){
+  const done = ok => { if(!btn) return; const o=btn.textContent; btn.textContent = ok?'✔ скопировано':'выдели и Cmd+C'; setTimeout(()=>btn.textContent=o,1500); };
+  try{ await navigator.clipboard.writeText(text); done(true); }
+  catch{ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
+    let ok=false; try{ ok=document.execCommand('copy'); }catch{} ta.remove(); done(ok); }
+}
+
 /* ================= net: rate-limit aware ================= */
 const NET = { req:0, r429:0, errors:0 };
 class RateLimited extends Error { constructor(wait){ super('rate limited'); this.wait=wait; } }
@@ -233,10 +250,10 @@ async function sp(url, {maxWait=60000} = {}){
       const wait = ra ? ra*1000 : backoff; backoff = Math.min(backoff*2, 30000);
       if(wait > maxWait) throw new RateLimited(wait);
       GATE.until = Date.now() + wait;
-      PIPE.note(`⏸ Spotify rate limit, жду ${Math.ceil(wait/1000)}s`);
+      PIPE.note(`⏸ Spotify rate limit, жду ${Math.ceil(wait/1000)}s`); dbg(`spotify 429 on ${url} · retry-after ${ra||'n/a'} · wait ${wait}ms`);
       continue;
     }
-    if(!r.ok){ NET.errors++; throw new Error(`Spotify ${r.status} on ${url}`); }
+    if(!r.ok){ NET.errors++; dbg(`spotify ${r.status} on ${url}`); throw new Error(`Spotify ${r.status} on ${url}`); }
     return r.json();
   }
   throw new RateLimited(backoff);
@@ -331,7 +348,7 @@ const NP = {
   get(k){ return this.steps.find(s=>s.key===k); },
   set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
   start(k,patch={}){ this.set(k,{status:'run',t0:Date.now(),note:'',...patch}); },
-  finish(k,status='done',note=''){ this.set(k,{status,t1:Date.now(),note}); },
+  finish(k,status='done',note=''){ const s=this.get(k); this.set(k,{status,t1:Date.now(),note}); dbg(`[norm:${k}] ${status} · ${s.done}/${s.total??'-'} ${note}`); },
   render(){ $('#normRows').innerHTML = renderSteps(this.steps); },
 };
 
@@ -347,7 +364,7 @@ async function sb(path, {method='GET', body, prefer}={}){
   const headers = {apikey:SB_KEY,'content-type':'application/json'};
   if(prefer) headers.Prefer = prefer;
   const r = await fetch(`${SB_URL}/rest/v1/${path}`,{method,headers,body:body?JSON.stringify(body):undefined});
-  if(!r.ok){ NET.errors++; throw new Error(`DB ${r.status}: ${(await r.text()).slice(0,140)}`); }
+  if(!r.ok){ NET.errors++; const tx=(await r.text()).slice(0,300); dbg(`db ${method} ${path.slice(0,80)} → ${r.status} ${tx}`); throw new Error(`DB ${r.status}: ${tx.slice(0,140)}`); }
   return method==='GET' ? r.json() : null;
 }
 const chunks = (a,n) => Array.from({length:Math.ceil(a.length/n)},(_,i)=>a.slice(i*n,i*n+n));
@@ -390,7 +407,7 @@ async function sbSync(payload){
     headers:{apikey:SB_KEY,'content-type':'application/json','x-spotify-token':await accessToken()},
     body:JSON.stringify(payload)});
   const j = await r.json().catch(()=>({}));
-  if(!r.ok){ NET.errors++; throw new Error(`sync ${r.status}: ${j.error||''}`); }
+  if(!r.ok){ NET.errors++; dbg(`sync → ${r.status} ${JSON.stringify(j).slice(0,300)}`); throw new Error(`sync ${r.status}: ${j.error||''}`); }
   return j;
 }
 async function dbPush(tracks){
@@ -435,7 +452,7 @@ const PIPE = {
   cur:null,
   note(t){ if(this.cur) this.set(this.cur,{note:t}); },
   start(k,patch={}){ this.cur=k; this.set(k,{status:'run',t0:Date.now(),note:'',...patch}); },
-  finish(k,status='done',note=''){ this.set(k,{status,t1:Date.now(),note}); this.cur=null; },
+  finish(k,status='done',note=''){ const s=this.get(k); this.set(k,{status,t1:Date.now(),note}); this.cur=null; dbg(`[${k}] ${status} · ${s.done}/${s.total??'-'} · ${s.t0?((Date.now()-s.t0)/1000).toFixed(1)+'s':''} ${note}`); },
   render(){
     $('#pipe').hidden = false;
     $('#pipeRows').innerHTML = renderSteps(this.steps);
@@ -667,7 +684,7 @@ function aiHave(){
 }
 let AI_STOP=false;
 const aiLog = [];
-function aiLogPush(line){ aiLog.unshift(line); $('#aiLog').textContent = aiLog.join('\n\n'); }
+function aiLogPush(line){ dbg('[ai] '+line.split('\n')[0]); aiLog.unshift(line); $('#aiLog').textContent = aiLog.join('\n\n'); }
 async function aiDescribe(n){
   if(!SB_DESCRIBE_FN || !LIB.length) return;
   const pick = LIB.filter(t=>!t.ai).sort((a,b)=>(!!b.isrc)-(!!a.isrc)||Math.random()-.5).slice(0,n);
@@ -708,6 +725,7 @@ async function aiDescribe(n){
         upd();
       }
     }catch(e){ c.tried+=part.length; c.gfail+=part.length; aiLogPush('✖ батч упал: '+e.message); upd(); }
+    dbg(`[ai] batch done · ok ${c.ok} · miss ${c.miss} · gfail ${c.gfail} · queue ${queue.length}`);
   }
   const left = pick.length - c.tried;
   const fin = st => ({status:st, t1:Date.now()});
@@ -736,7 +754,9 @@ $('#aiRun10').onclick = () => aiDescribe(10);
 $('#aiRun50').onclick = () => aiDescribe(50);
 $('#aiRunAll').onclick = () => aiDescribe(1e9);
 $('#aiStop').onclick = () => { AI_STOP=true; $('#aiStop').disabled=true; };
-$('#pipeToggle').onclick = () => { const h=!$('#pipeRows').hidden; $('#pipeRows').hidden=h; $('#aiGrp').hidden=h; $('#normGrp').hidden=h; $('#pipeToggle').textContent=h?'развернуть':'свернуть'; };
+$('#aiLogCopy').onclick = e => { e.preventDefault(); copyText(dbgHeader()+'\n'+aiLog.slice().reverse().join('\n\n'), e.target); };
+$('#dbgCopy').onclick = e => { e.preventDefault(); copyText(dbgHeader()+'\n'+DBG.join('\n'), e.target); };
+$('#pipeToggle').onclick = () => { const h=!$('#pipeRows').hidden; $('#pipeRows').hidden=h; $('#aiGrp').hidden=h; $('#normGrp').hidden=h; $('#dbgWrap').hidden=h; $('#pipeToggle').textContent=h?'развернуть':'свернуть'; };
 setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
 
 (async()=>{

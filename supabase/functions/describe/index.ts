@@ -15,7 +15,9 @@ const json = (d: unknown, status = 200) =>
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 // первая модель, которая ответит не 404, запоминается
-const MODELS = [Deno.env.get("GEMINI_MODEL"), "gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"].filter(Boolean) as string[];
+// Санитизация: секрет могли вставить как "GEMINI_MODEL=models/gemini-2.5-flash" или в кавычках
+const cleanModel = (m?: string) => (m ?? "").trim().replace(/^GEMINI_MODEL\s*=\s*/i, "").replace(/^["'`]+|["'`]+$/g, "").replace(/^models\//, "").trim();
+const MODELS = [cleanModel(Deno.env.get("GEMINI_MODEL")) || null, "gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"].filter(Boolean) as string[];
 let MODEL_OK: string | null = null;
 
 const ID = /^[A-Za-z0-9]{10,40}$/;
@@ -116,8 +118,10 @@ async function gemini(b64: string, mime: string) {
           generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0.2 },
         }),
       });
-      if (r.status === 404) { last = `model ${m} not found`; break; }
+      if (r.status === 404) { last = `model "${m}" not found`; break; }
       const j = await r.json().catch(() => ({}));
+      // кривое имя модели → пробуем следующую, а не валим весь трек
+      if (r.status === 400 && /model/i.test(j?.error?.message ?? "")) { last = `model "${m}": ${j.error.message}`; break; }
       if (r.status === 503 || r.status === 500) { last = `${m}: overloaded`; await sleep(2000 * (attempt + 1)); continue; }
       if (r.status === 429) {
         // deno-lint-ignore no-explicit-any
@@ -126,7 +130,7 @@ async function gemini(b64: string, mime: string) {
         if (sec <= 20 && attempt < 2) { await sleep(sec * 1000); continue; }
         throw new RateLimit(sec);
       }
-      if (!r.ok) throw new Error(`gemini ${r.status}: ${j?.error?.message ?? ""}`.slice(0, 200));
+      if (!r.ok) throw new Error(`gemini ${r.status} [${m}]: ${j?.error?.message ?? ""}`.slice(0, 220));
       MODEL_OK = m;
       const text = j?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
       return { model: m, data: JSON.parse(text) };

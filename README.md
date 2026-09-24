@@ -80,7 +80,7 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 Берёт 30-секундное превью трека: Deezer (ISRC → точный поиск → простой поиск), если не нашлось — iTunes Search API, отдаёт его Gemini: модель слушает аудио и возвращает JSON с описанием, инструментами, вокалом, mood, энергией, слотом и заметками по сведению. Результат пишется в `tracks.ai`.
 
 1. В SQL Editor выполни `alter table tracks add column if not exists ai jsonb;` (строка уже есть в конце `db/schema.sql`).
-2. В **Edge Functions → Secrets** добавь `GEMINI_API_KEY`. Опционально `GEMINI_MODEL`, по умолчанию функция пробует gemini-flash-latest → 3.8-flash → 3-flash → 2.5-flash.
+2. В **Edge Functions → Secrets** добавь `GEMINI_API_KEY`. Опционально `GEMINI_MODEL`: только имя модели, например `gemini-2.5-flash`, без кавычек и `models/`. Функция сама чистит лишнее, а если модель не подходит, переходит к следующей: flash-latest → 2.5-flash → flash-lite-latest → 2.5-flash-lite.
 3. Задеплой `supabase/functions/describe/index.ts` через редактор и выключи Verify JWT.
 4. Впиши слаг функции в `docs/index.html` → `SB_DESCRIBE_FN`.
 5. На сайте в панели «Данные» → группа **AI-describer** → ▶ 10 / 50 / все.
