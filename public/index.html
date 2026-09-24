@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DJ Sorter</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root{--bg:#f3f5f2;--fg:#15181c;--mut:#5d6570;--acc:#138a3e;--acc-fg:#fff;--line:#d5dad6;--card:#fff;--warn:#fff4d6;--warn-fg:#6b4e00}
+  @media (prefers-color-scheme: dark){:root{--bg:#0f1115;--fg:#e8e8ea;--mut:#8a8f98;--acc:#1db954;--acc-fg:#000;--line:#23262d;--card:#161920;--warn:#2a2410;--warn-fg:#e6c56a;color-scheme:dark}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  main{max-width:1000px;margin:0 auto;padding:16px}
+  h1{font-size:18px;margin:0 0 12px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+  button,select,input,textarea{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+  button{cursor:pointer} button.pri{background:var(--acc);color:var(--acc-fg);border-color:var(--acc);font-weight:600}
+  button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+  button:disabled{opacity:.4;cursor:default}
+  input{min-width:0;flex:1 1 220px} textarea{width:100%;min-height:90px;resize:vertical}
+  .mut{color:var(--mut)} .tabs button.on{border-color:var(--acc);color:var(--acc)}
+  #status{white-space:pre-wrap;color:var(--mut);min-height:1.4em;margin-bottom:8px}
+  .note{background:var(--warn);color:var(--warn-fg);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;margin:0;white-space:pre;font-variant-numeric:tabular-nums}
+  details{margin-bottom:10px} summary{cursor:pointer;color:var(--mut)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>🎧 DJ Sorter <span class="mut">— MVP · Jev</span></h1>
+
+  <details id="setup">
+    <summary>⚙️ Настройки</summary>
+    <div class="row" style="margin-top:8px">
+      <input id="clientId" placeholder="Spotify Client ID">
+      <input id="lastfmKey" placeholder="Last.fm API key (опционально, для стилей)">
+      <button id="saveCfg">Save</button>
+    </div>
+    <div class="mut">Redirect URI для Spotify Dashboard: <b id="redir"></b></div>
+    <div class="mut" id="backendInfo"></div>
+  </details>
+
+  <div class="row">
+    <button class="pri" id="login">Connect Spotify</button>
+    <button id="demo">Demo data</button>
+    <button id="reload" disabled>Refetch library</button>
+    <button id="reclassify" disabled>Re-classify (Jev)</button>
+    <button id="logout">Logout</button>
+  </div>
+  <div id="status"></div>
+
+  <div id="app" hidden>
+    <div class="row tabs">
+      <button data-tab="lib" class="on">📚 Library</button>
+      <button data-tab="dj">🎛 DJ</button>
+      <button data-tab="gen">🎹 Generator</button>
+    </div>
+
+    <section id="tab-lib">
+      <div class="row">
+        <span class="mut">Sort:</span>
+        <select id="sortBy">
+          <option value="genre">Жанр (Jev → Spotify)</option>
+          <option value="key">Тональность (Camelot)</option>
+          <option value="bpm">BPM</option>
+          <option value="energy">Энергия (Jev)</option>
+          <option value="mood">Mood (Jev)</option>
+          <option value="slot">Слот в сете (Jev)</option>
+          <option value="style">Стиль артиста</option>
+          <option value="artist">Артист</option>
+          <option value="added">Дата лайка</option>
+        </select>
+        <label class="mut"><input type="checkbox" id="group" checked style="flex:0"> группировать</label>
+        <input id="q" placeholder="filter…" style="flex:0 1 180px">
+      </div>
+      <pre id="list"></pre>
+    </section>
+
+    <section id="tab-dj" hidden>
+      <div class="row">
+        <button class="pri" id="renew">🔄 Renew</button>
+        <span class="mut">длина</span>
+        <select id="setLen"><option>10</option><option selected>20</option><option>30</option><option>50</option></select>
+        <span class="mut">BPM ±</span>
+        <select id="bpmTol"><option>4</option><option selected>8</option><option>12</option></select>
+        <label class="mut"><input type="checkbox" id="curve" checked style="flex:0"> кривая энергии</label>
+      </div>
+      <pre id="set"></pre>
+    </section>
+
+    <section id="tab-gen" hidden>
+      <div class="note">🚧 Генератор музыки — в разработке. Модель и пайплайн подключим следующим шагом.</div>
+      <div class="row">
+        <button id="seedFromSet">Взять контекст из DJ-сета</button>
+        <span class="mut">(BPM, тональность, жанр, mood, энергия последних треков)</span>
+      </div>
+      <textarea id="genPrompt" placeholder="Промпт для генерации…"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="pri" id="generate" disabled>Generate</button>
+        <span class="mut">скоро</span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+/* ================= config ================= */
+const LS = {
+  get:(k,d=null)=>{try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},
+  set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},
+  del:(k)=>{try{localStorage.removeItem(k)}catch{}},
+};
+const REDIRECT = location.origin + location.pathname;
+const SCOPES = 'user-library-read';
+const $ = s => document.querySelector(s);
+const status = t => { $('#status').textContent = t; };
+let BACKEND = false; // есть ли наш Worker (/api)
+$('#redir').textContent = REDIRECT;
+$('#clientId').value = LS.get('cfg.clientId','');
+$('#lastfmKey').value = LS.get('cfg.lastfmKey','');
+if(!LS.get('cfg.clientId')) $('#setup').open = true;
+$('#saveCfg').onclick = () => { LS.set('cfg.clientId',$('#clientId').value.trim()); LS.set('cfg.lastfmKey',$('#lastfmKey').value.trim()); status('Saved ✔'); };
+
+async function detectBackend(){
+  try{ const r = await fetch('api/health'); const j = await r.json(); BACKEND = !!j.ok; }
+  catch{ BACKEND = false; }
+  $('#backendInfo').textContent = BACKEND ? 'Backend: ✔ Worker (ReccoBeats proxy + Jev)' : 'Backend: ✖ нет Worker — Jev выключен, ReccoBeats напрямую';
+}
+
+/* ================= music theory ================= */
+const CAM_MAJ = [8,3,10,5,12,7,2,9,4,11,6,1];
+const CAM_MIN = [5,12,7,2,9,4,11,6,1,8,3,10];
+const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function camelot(key, mode){
+  if(key==null || key<0 || mode==null) return null;
+  return { n: mode ? CAM_MAJ[key] : CAM_MIN[key], l: mode ? 'B' : 'A' };
+}
+const camStr = c => c ? `${c.n}${c.l}` : '—';
+const keyName = t => t.key==null||t.key<0 ? '' : NOTES[t.key] + (t.mode ? '' : 'm');
+// 0 perfect · 1 harmonic (±1 / relative) · 2 energy boost (+2) · 3 unknown · 9 clash
+function keyDist(a, b){
+  if(!a || !b) return 3;
+  const d = Math.min((a.n-b.n+12)%12, (b.n-a.n+12)%12);
+  if(a.l===b.l){ if(d===0) return 0; if(d===1) return 1; if(d===2) return 2; return 9; }
+  return d===0 ? 1 : 9;
+}
+function bpmDiff(a, b){
+  if(!a || !b) return 20;
+  return Math.min(Math.abs(a-b), Math.abs(a*2-b), Math.abs(a-b*2));
+}
+
+/* ================= spotify PKCE ================= */
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+function randStr(n=64){ const a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a).slice(0,n); }
+async function login(){
+  const cid = LS.get('cfg.clientId');
+  if(!cid){ $('#setup').open=true; return status('Сначала вставь Spotify Client ID в настройках ⚙️'); }
+  const verifier = randStr(64);
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  LS.set('pkce.verifier', verifier);
+  const p = new URLSearchParams({client_id:cid,response_type:'code',redirect_uri:REDIRECT,scope:SCOPES,code_challenge_method:'S256',code_challenge:challenge});
+  location.href = 'https://accounts.spotify.com/authorize?' + p;
+}
+async function tokenReq(body){
+  const r = await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body)});
+  const j = await r.json(); if(!r.ok) throw new Error('token: '+(j.error_description||j.error));
+  LS.set('tok',{access:j.access_token, refresh:j.refresh_token||LS.get('tok',{}).refresh, exp:Date.now()+(j.expires_in-60)*1000});
+}
+async function handleCallback(){
+  const p = new URLSearchParams(location.search);
+  if(p.get('error')) status('Spotify auth error: '+p.get('error'));
+  if(!p.get('code')) return;
+  await tokenReq({client_id:LS.get('cfg.clientId'),grant_type:'authorization_code',code:p.get('code'),redirect_uri:REDIRECT,code_verifier:LS.get('pkce.verifier')});
+  history.replaceState(null,'',REDIRECT);
+}
+async function accessToken(){
+  const t = LS.get('tok'); if(!t) return null;
+  if(Date.now() < t.exp) return t.access;
+  await tokenReq({client_id:LS.get('cfg.clientId'),grant_type:'refresh_token',refresh_token:t.refresh});
+  return LS.get('tok').access;
+}
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+async function sp(url){
+  for(let i=0;i<5;i++){
+    const r = await fetch(url.startsWith('http')?url:'https://api.spotify.com/v1'+url,{headers:{Authorization:'Bearer '+await accessToken()}});
+    if(r.status===429){ await sleep((+r.headers.get('Retry-After')||2)*1000); continue; }
+    if(!r.ok) throw new Error(`Spotify ${r.status} on ${url}`);
+    return r.json();
+  }
+  throw new Error('Spotify rate limit');
+}
+
+/* ================= data pipeline ================= */
+async function fetchLiked(){
+  const out=[]; let url='/me/tracks?limit=50';
+  while(url){
+    const j = await sp(url);
+    for(const it of j.items){ const t=it.track; if(!t||!t.id) continue;
+      out.push({id:t.id,name:t.name,artists:t.artists.map(a=>a.name),artistIds:t.artists.map(a=>a.id),added:it.added_at}); }
+    status(`Лайки: ${out.length}${j.total?' / '+j.total:''}…`);
+    url = j.next;
+  }
+  return out;
+}
+// BPM/key: Spotify audio-features закрыт для новых приложений → ReccoBeats (через Worker, если он есть)
+async function fetchFeatures(tracks){
+  const cache = LS.get('cache.feat',{});
+  const todo = tracks.filter(t=>!(t.id in cache)).map(t=>t.id);
+  for(let i=0;i<todo.length;i+=40){
+    const ids = todo.slice(i,i+40);
+    try{
+      const base = BACKEND ? 'api/features?ids=' : 'https://api.reccobeats.com/v1/audio-features?ids=';
+      const r = await fetch(base+ids.join(','));
+      if(r.status===429){ await sleep(3000); i-=40; continue; }
+      const j = await r.json();
+      for(const f of (j.content||[])){
+        const sid = (f.href||'').split('/track/')[1]?.split('?')[0];
+        if(sid) cache[sid] = {bpm:f.tempo?Math.round(f.tempo):null,key:f.key??null,mode:f.mode??null,energyAudio:f.energy??null};
+      }
+    }catch(e){ console.warn('reccobeats',e); }
+    ids.forEach(id=>{ if(!(id in cache)) cache[id]=null; });
+    status(`BPM/key: ${Math.min(i+40,todo.length)} / ${todo.length}…`);
+    await sleep(150);
+  }
+  LS.set('cache.feat',cache);
+  tracks.forEach(t=>Object.assign(t, cache[t.id]||{}));
+}
+// жанры Spotify (batch-эндпоинт выпилен в 02/2026 → по одному артисту, с кэшем)
+async function fetchGenres(tracks){
+  const cache = LS.get('cache.genres',{});
+  const ids = [...new Set(tracks.map(t=>t.artistIds[0]))].filter(id=>!(id in cache));
+  let n=0;
+  const worker = async () => { while(ids.length){ const id=ids.shift();
+    try{ cache[id]=(await sp('/artists/'+id)).genres||[]; }catch{ cache[id]=[]; }
+    if(++n%10===0){ status(`Жанры артистов: ${n}…`); LS.set('cache.genres',cache); } } };
+  await Promise.all([worker(),worker(),worker()]);
+  LS.set('cache.genres',cache);
+  tracks.forEach(t=>{ t.genres = cache[t.artistIds[0]]||[]; });
+}
+// стили: Last.fm top tags (опционально)
+async function fetchStyles(tracks){
+  const key = LS.get('cfg.lastfmKey'); const cache = LS.get('cache.styles',{});
+  if(key){
+    const names=[...new Set(tracks.map(t=>t.artists[0]))].filter(a=>!(a in cache)); let n=0;
+    for(const a of names){
+      try{ const j=await (await fetch(`https://ws.audioscrobbler.com/2.0/?method=artist.gettoptags&artist=${encodeURIComponent(a)}&api_key=${key}&format=json`)).json();
+        cache[a]=(j.toptags?.tag||[]).filter(x=>x.count>=10).slice(0,4).map(x=>x.name.toLowerCase()); }catch{ cache[a]=[]; }
+      if(++n%20===0){ status(`Last.fm стили: ${n} / ${names.length}…`); LS.set('cache.styles',cache); }
+      await sleep(210);
+    }
+    LS.set('cache.styles',cache);
+  }
+  tracks.forEach(t=>{ t.styles = cache[t.artists[0]] || t.genres.slice(1); });
+}
+// Jev: классификация треков (genre / mood / energy / slot / vocal)
+const jevState = t => `Track: "${t.name}" by ${t.artists.join(', ')}.` +
+  (t.genres?.length ? ` Artist genres: ${t.genres.slice(0,5).join(', ')}.` : '') +
+  (t.styles?.length ? ` Tags: ${t.styles.slice(0,4).join(', ')}.` : '') +
+  (t.bpm ? ` Tempo: ${t.bpm} bpm.` : '');
+async function classifyJev(tracks, force=false){
+  if(!BACKEND) return;
+  const cache = force ? {} : LS.get('cache.jev',{});
+  const todo = tracks.filter(t=>!cache[t.id]);
+  for(let i=0;i<todo.length;i+=20){
+    const batch = todo.slice(i,i+20).map(t=>({id:t.id,text:jevState(t)}));
+    try{
+      const r = await fetch('api/classify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tracks:batch})});
+      const j = await r.json();
+      for(const x of (j.results||[])) if(!x.error) cache[x.id]={genre:x.genre,gc:x.gc,mood:x.mood,energy:x.energy,slot:x.slot,vocal:x.vocal};
+    }catch(e){ console.warn('jev',e); }
+    status(`Jev: ${Math.min(i+20,todo.length)} / ${todo.length}…`);
+    LS.set('cache.jev',cache);
+  }
+  tracks.forEach(t=>{ t.jev = cache[t.id]||null; });
+}
+async function loadLibrary(force=false){
+  if(!force && LS.get('lib')) { const l=LS.get('lib'); await classifyJev(l); LS.set('lib',l); return l; }
+  status('Тяну лайки…');
+  const tracks = await fetchLiked();
+  await fetchFeatures(tracks);
+  await fetchGenres(tracks);
+  await fetchStyles(tracks);
+  await classifyJev(tracks);
+  LS.set('lib',tracks);
+  return tracks;
+}
+
+/* ================= demo ================= */
+function demoLibrary(){
+  const G=[['deep house',['deep','soulful'],'groovy',1.6,'warmup'],['tech house',['groovy','minimal'],'groovy',2.6,'build'],['techno',['dark','industrial'],'dark',3.4,'peak'],
+           ['melodic techno',['progressive','emotional'],'melancholic',2.8,'build'],['disco',['nu disco','funk'],'euphoric',2.4,'warmup'],['drum and bass',['liquid','jungle'],'euphoric',3.6,'peak'],['hip hop / r&b',['boom bap','jazz rap'],'chill',1.8,'cooldown']];
+  const B={ 'deep house':[118,124],'tech house':[124,128],'techno':[128,138],'melodic techno':[120,126],'disco':[110,122],'drum and bass':[170,176],'hip hop / r&b':[86,96] };
+  let s=42; const rnd=()=>((s=s*16807%2147483647)/2147483647);
+  return Array.from({length:60},(_,i)=>{ const [g,st,mood,e,slot]=G[Math.floor(rnd()*G.length)]; const [lo,hi]=B[g];
+    return {id:'demo'+i,name:`Track ${String(i+1).padStart(2,'0')}`,artists:[`Artist ${String.fromCharCode(65+i%20)}`],artistIds:['a'+i%20],
+      added:new Date(Date.now()-i*864e5*3).toISOString(),bpm:Math.round(lo+rnd()*(hi-lo)),key:Math.floor(rnd()*12),mode:rnd()>.4?0:1,
+      genres:[g],styles:st,jev:{genre:g,gc:+(0.4+rnd()*0.6).toFixed(2),mood,energy:Math.max(0,Math.min(4,+(e+rnd()-0.5).toFixed(2))),slot,vocal:+rnd().toFixed(2)}}; });
+}
+
+/* ================= helpers ================= */
+let LIB=[];
+const energyOf = t => t.jev?.energy ?? (t.energyAudio!=null ? t.energyAudio*4 : null); // 0..4
+const primaryGenre = t => t.jev?.genre || t.genres?.[0] || '— no genre';
+const primaryStyle = t => t.styles?.[0] || '— no style';
+const unsure = t => t.jev && t.jev.gc!=null && t.jev.gc<0.5 ? '?' : ' ';
+function line(t){
+  const c = camStr(camelot(t.key,t.mode));
+  const e = energyOf(t);
+  const jev = t.jev ? `${unsure(t)}${t.jev.genre||''} · ${t.jev.mood||''} · E${e!=null?e.toFixed(1):'?'}${t.jev.vocal>0.6?' · vox':''}` : (t.genres||[]).slice(0,2).join(', ');
+  return `${String(t.bpm??'—').padStart(3)} bpm  ${c.padStart(3)} ${keyName(t).padEnd(3)}  ${t.artists.join(', ')} — ${t.name}   [${jev}]`;
+}
+const byBpm = (a,b)=>(a.bpm??999)-(b.bpm??999);
+const SLOT_ORDER = {warmup:0,build:1,peak:2,cooldown:3};
+const SORTS = {
+  genre:  [t=>primaryGenre(t), (a,b)=>primaryGenre(a).localeCompare(primaryGenre(b))||byBpm(a,b)],
+  key:    [t=>camStr(camelot(t.key,t.mode)), (a,b)=>{const x=camelot(a.key,a.mode),y=camelot(b.key,b.mode); return (x?x.n:99)-(y?y.n:99)||(x?.l||'').localeCompare(y?.l||'')||byBpm(a,b);}],
+  bpm:    [t=>t.bpm?`${Math.floor(t.bpm/10)*10}–${Math.floor(t.bpm/10)*10+9}`:'— no bpm', byBpm],
+  energy: [t=>{const e=energyOf(t); return e==null?'— no energy':`E${Math.round(e)}`;}, (a,b)=>(energyOf(b)??-1)-(energyOf(a)??-1)],
+  mood:   [t=>t.jev?.mood||'— no mood', (a,b)=>(a.jev?.mood||'~').localeCompare(b.jev?.mood||'~')||byBpm(a,b)],
+  slot:   [t=>t.jev?.slot||'— no slot', (a,b)=>(SLOT_ORDER[a.jev?.slot]??9)-(SLOT_ORDER[b.jev?.slot]??9)||byBpm(a,b)],
+  style:  [t=>primaryStyle(t), (a,b)=>primaryStyle(a).localeCompare(primaryStyle(b))||byBpm(a,b)],
+  artist: [t=>t.artists[0], (a,b)=>a.artists[0].localeCompare(b.artists[0])],
+  added:  [t=>t.added?.slice(0,7)||'', (a,b)=>(b.added||'').localeCompare(a.added||'')],
+};
+function renderList(){
+  const [grp,cmp] = SORTS[$('#sortBy').value];
+  const q = $('#q').value.toLowerCase();
+  const arr = LIB.filter(t=>!q || line(t).toLowerCase().includes(q)).sort(cmp);
+  let out=[], last=null;
+  for(const t of arr){
+    if($('#group').checked){ const g=grp(t); if(g!==last){ out.push((out.length?'\n':'')+`## ${g}`); last=g; } }
+    out.push(line(t));
+  }
+  const withF = LIB.filter(t=>t.bpm).length, withJ = LIB.filter(t=>t.jev).length;
+  $('#list').textContent = `${arr.length} tracks · BPM/key ${withF}/${LIB.length} · Jev ${withJ}/${LIB.length}  (? = Jev не уверен)\n\n` + out.join('\n');
+}
+
+/* ================= DJ engine ================= */
+// целевая энергия по позиции: разогрев → пик на ~70% → спад
+const targetEnergy = p => p < 0.7 ? 1.2 + (p/0.7)*2.6 : 3.8 - ((p-0.7)/0.3)*1.3;
+function transitionCost(a, b, tol, target){
+  const bd = bpmDiff(a.bpm, b.bpm);
+  const kd = keyDist(camelot(a.key,a.mode), camelot(b.key,b.mode));
+  const ga = new Set([a.jev?.genre, ...(a.genres||[]), ...(a.styles||[])].filter(Boolean));
+  const shared = [b.jev?.genre, ...(b.genres||[]), ...(b.styles||[])].filter(x=>x&&ga.has(x)).length;
+  const moodSame = a.jev?.mood && a.jev.mood===b.jev?.mood ? 1 : 0;
+  const eb = energyOf(b);
+  const eCost = target!=null && eb!=null ? Math.abs(eb-target)*6 : (energyOf(a)!=null&&eb!=null ? Math.abs(energyOf(a)-eb)*3 : 2);
+  return (bd>tol ? 50 + bd : bd*1.5) + kd*6 - Math.min(shared,3)*4 - moodSame*2 + eCost;
+}
+let LAST_SET = null;
+function buildSet(len, tol, curve){
+  const pool = LIB.filter(t=>t.bpm);
+  if(!pool.length) return null;
+  const used = new Set(); let cur = pool[Math.floor(Math.random()*pool.length)];
+  const set=[cur]; used.add(cur.id);
+  while(set.length<len){
+    const target = curve ? targetEnergy(set.length/(len-1)) : null;
+    const cands = pool.filter(t=>!used.has(t.id)).map(t=>({t,c:transitionCost(cur,t,tol,target)})).sort((x,y)=>x.c-y.c);
+    if(!cands.length) break;
+    const top = cands.slice(0,3).filter(x=>x.c <= cands[0].c+4);
+    cur = top[Math.floor(Math.random()*top.length)].t; set.push(cur); used.add(cur.id);
+  }
+  return set;
+}
+const KD_LABEL = {0:'perfect',1:'harmonic',2:'+2 boost',3:'?',9:'clash'};
+function renderSet(){
+  const set = buildSet(+$('#setLen').value, +$('#bpmTol').value, $('#curve').checked);
+  LAST_SET = set;
+  if(!set){ $('#set').textContent='Нет треков с BPM — DJ-режиму нечего сводить.'; return; }
+  const rows = set.map((t,i)=>{
+    let tr='';
+    if(i){ const p=set[i-1]; const kd=keyDist(camelot(p.key,p.mode),camelot(t.key,t.mode)); const d=bpmDiff(p.bpm,t.bpm);
+      tr = `      ↓ ${d?'Δ'+d+' bpm':'same bpm'}, key ${KD_LABEL[kd]}\n`; }
+    return tr + `${String(i+1).padStart(2)}. ${line(t)}`;
+  });
+  const curve = set.map(t=>{const e=energyOf(t); return e==null?'·':'▁▂▃▅▇'[Math.max(0,Math.min(4,Math.round(e)))];}).join('');
+  $('#set').textContent = `Start: random → ${set.length} tracks\nEnergy: ${curve}\n\n` + rows.join('\n');
+}
+
+/* ================= generator (placeholder) ================= */
+function seedPrompt(){
+  const s = (LAST_SET||[]).slice(-3);
+  if(!s.length) return 'Сначала собери DJ-сет.';
+  const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
+  const bpm = avg(s.map(t=>t.bpm).filter(Boolean));
+  const last = s[s.length-1];
+  const e = avg(s.map(energyOf).filter(x=>x!=null));
+  return [
+    `Style: ${primaryGenre(last)}${last.jev?.mood?', '+last.jev.mood:''}`,
+    `Tempo: ${bpm?Math.round(bpm):'?'} bpm`,
+    `Key: ${keyName(last)||'?'} (${camStr(camelot(last.key,last.mode))})`,
+    `Energy: ${e!=null?e.toFixed(1):'?'} / 4`,
+    `Vocals: ${last.jev?.vocal>0.6?'yes':'instrumental'}`,
+    `Reference: ${s.map(t=>`${t.artists[0]} — ${t.name}`).join('; ')}`,
+  ].join('\n');
+}
+
+/* ================= wiring ================= */
+function showApp(tracks){ LIB=tracks; $('#app').hidden=false; renderList(); renderSet(); }
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  for(const k of ['lib','dj','gen']) $('#tab-'+k).hidden = b.dataset.tab!==k;
+});
+['#sortBy','#group','#q'].forEach(s=>$(s).addEventListener('input',renderList));
+$('#renew').onclick = renderSet; $('#setLen').onchange = renderSet; $('#bpmTol').onchange = renderSet; $('#curve').onchange = renderSet;
+$('#seedFromSet').onclick = () => { $('#genPrompt').value = seedPrompt(); };
+$('#login').onclick = login;
+$('#demo').onclick = () => { status('Demo: 60 фейковых треков (с фейковой Jev-разметкой)'); showApp(demoLibrary()); };
+$('#logout').onclick = () => { ['tok','lib','pkce.verifier'].forEach(LS.del); location.reload(); };
+$('#reload').onclick = async () => { try{ showApp(await loadLibrary(true)); status(`Готово: ${LIB.length} треков`);}catch(e){status('Ошибка: '+e.message)} };
+$('#reclassify').onclick = async () => { try{ await classifyJev(LIB,true); LS.set('lib',LIB); showApp(LIB); status('Jev: переразмечено');}catch(e){status('Ошибка: '+e.message)} };
+
+(async()=>{
+  try{
+    await detectBackend();
+    await handleCallback();
+    if(LS.get('tok')){
+      $('#reload').disabled=false; $('#reclassify').disabled=!BACKEND; $('#login').textContent='Reconnect';
+      showApp(await loadLibrary()); status(`Готово: ${LIB.length} треков`);
+    }
+  }catch(e){ status('Ошибка: '+e.message); console.error(e); }
+})();
+</script>
+</body>
+</html>
