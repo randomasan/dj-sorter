@@ -83,4 +83,4 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 2. В **Edge Functions → Secrets** добавь `GEMINI_API_KEY`. Опционально `GEMINI_MODEL`, по умолчанию функция пробует gemini-flash-latest → 3.8-flash → 3-flash → 2.5-flash.
 3. Задеплой `supabase/functions/describe/index.ts` через редактор и выключи Verify JWT.
 4. Впиши слаг функции в `docs/index.html` → `SB_DESCRIBE_FN`.
-5. На сайте нажми кнопку «🔬 AI-описание: 10 треков».
+5. На сайте в панели «Данные» → группа **AI-describer** → ▶ 10 / 50 / все.

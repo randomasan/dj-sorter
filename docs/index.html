@@ -33,6 +33,8 @@
   .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:4px 0}
   .bar i{display:block;height:100%;background:var(--acc);transition:width .3s}
   .step.paused .bar i{background:var(--warn-fg)}
+  .grp{border-top:1px dashed var(--line);margin-top:10px}
+  #aiLog{max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:6px}
   .sm{font-size:11px} button.sm{padding:2px 8px}
   @keyframes spin{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion: reduce){.step.run .ic{animation:none}}
@@ -66,6 +68,16 @@
       <b>Данные</b><span class="mut sm" id="pipeNet"></span><button id="pipeToggle" class="sm">свернуть</button>
     </div>
     <div id="pipeRows"></div>
+    <div id="aiGrp" class="grp">
+      <div class="row" style="justify-content:space-between;margin:14px 0 6px">
+        <b>AI-describer</b>
+        <span class="row" style="margin:0;gap:6px">
+          <button id="aiRun10" class="sm">▶ 10</button><button id="aiRun50" class="sm">▶ 50</button><button id="aiRunAll" class="sm">▶ все</button><button id="aiStop" class="sm" disabled>⏹ стоп</button>
+        </span>
+      </div>
+      <div id="aiRows"></div>
+      <details id="aiLogWrap"><summary class="sm">лог описаний</summary><pre id="aiLog">пока пусто</pre></details>
+    </div>
   </section>
 
   <div id="app" hidden>
@@ -90,11 +102,6 @@
         <label class="mut"><input type="checkbox" id="group" checked style="flex:0"> группировать</label>
         <input id="q" placeholder="filter…" style="flex:0 1 180px">
       </div>
-      <div class="row" style="margin-top:10px">
-        <button id="aiRun">🔬 AI-описание: 10 треков (тест)</button>
-        <span class="mut sm" id="aiHint">Deezer/iTunes превью → Gemini слушает трек → текст в базу</span>
-      </div>
-      <pre id="aiOut" hidden></pre>
       <pre id="list"></pre>
     </section>
 
@@ -302,12 +309,26 @@ async function dbUpsertUser(tracks){
 
 /* ================= pipeline + loader ================= */
 // Шаги: что тянем и откуда. total/done заполняются по ходу.
+const ICON = {wait:'○',run:'◐',done:'●',skip:'–',paused:'⏸',err:'✖'};
+function renderSteps(steps){
+  return steps.map(s=>{
+    const tot = s.total, pct = tot ? Math.round(100*Math.min(s.done,tot)/tot) : (s.status==='done'?100:0);
+    const count = tot!=null ? `${s.done.toLocaleString()} / ${tot.toLocaleString()}` : (s.status==='wait'||s.status==='skip'?'—':'…');
+    const secs = s.t0 ? ((s.t1||Date.now())-s.t0)/1000 : 0;
+    const eta = s.status==='run' && tot && s.done>0 ? ` · ~${Math.max(1,Math.round(secs/s.done*(tot-s.done)))}s` : '';
+    return `<div class="step ${s.status}">
+      <div class="sh"><span class="ic">${ICON[s.status]}</span><b>${s.label}</b><span class="mut src">${s.src}</span><span class="cnt">${count}${eta}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="mut sm">${s.what}${s.cached?` · из кэша ${s.cached.toLocaleString()}`:''}${s.note?` · <span class="nt">${s.note}</span>`:''}</div>
+    </div>`;
+  }).join('');
+}
 const PIPE = {
   steps: [
     {key:'likes',  label:'Лайкнутые треки',          src:'Spotify · /me/tracks',            what:'название, артисты, дата лайка'},
     {key:'db',     label:'База треков',              src:'Supabase · tracks / users',       what:'общий кэш: берём уже спарсенное, сохраняем новое'},
     {key:'feat',   label:'BPM · тональность · energy', src:'ReccoBeats · /audio-features',  what:'tempo, key, mode, energy'},
-    {key:'jev',    label:'Разметка Jev',             src:'Jev · Cloudflare Worker',         what:'жанр-корзина, mood, энергия, слот'},
+    {key:'jev',    label:'Разметка Jev',             src:'Jev · Cloudflare Worker',         what:'mood, энергия, слот, вокал'},
   ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
   get(k){ return this.steps.find(s=>s.key===k); },
   set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
@@ -316,19 +337,8 @@ const PIPE = {
   start(k,patch={}){ this.cur=k; this.set(k,{status:'run',t0:Date.now(),note:'',...patch}); },
   finish(k,status='done',note=''){ this.set(k,{status,t1:Date.now(),note}); this.cur=null; },
   render(){
-    const ICON = {wait:'○',run:'◐',done:'●',skip:'–',paused:'⏸',err:'✖'};
     $('#pipe').hidden = false;
-    $('#pipeRows').innerHTML = this.steps.map(s=>{
-      const tot = s.total, pct = tot ? Math.round(100*Math.min(s.done,tot)/tot) : (s.status==='done'?100:0);
-      const count = tot!=null ? `${s.done.toLocaleString()} / ${tot.toLocaleString()}` : (s.status==='wait'||s.status==='skip'?'—':'…');
-      const secs = s.t0 ? ((s.t1||Date.now())-s.t0)/1000 : 0;
-      const eta = s.status==='run' && tot && s.done>0 ? ` · ~${Math.max(1,Math.round(secs/s.done*(tot-s.done)))}s` : '';
-      return `<div class="step ${s.status}">
-        <div class="sh"><span class="ic">${ICON[s.status]}</span><b>${s.label}</b><span class="mut src">${s.src}</span><span class="cnt">${count}${eta}</span></div>
-        <div class="bar"><i style="width:${pct}%"></i></div>
-        <div class="mut sm">${s.what}${s.cached?` · из кэша ${s.cached.toLocaleString()}`:''}${s.note?` · <span class="nt">${s.note}</span>`:''}</div>
-      </div>`;
-    }).join('');
+    $('#pipeRows').innerHTML = renderSteps(this.steps);
     $('#pipeNet').textContent = `запросов: ${NET.req} · 429: ${NET.r429} · ошибок: ${NET.errors}`;
   },
 };
@@ -448,7 +458,7 @@ function line(t){
   const c = camStr(camelot(t.key,t.mode));
   const e = energyOf(t);
   const jev = t.jev ? `${unsure(t)}${t.jev.mood||''} · E${e!=null?e.toFixed(1):'?'}${t.jev.vocal>0.6?' · vox':''}` : '';
-  return `${t.ai?'🔬':'  '}${String(t.bpm??'—').padStart(3)} bpm  ${c.padStart(3)} ${keyName(t).padEnd(3)}  ${t.artists.join(', ')} — ${t.name}   [${jev}]`;
+  return `${t.ai?'🔬':'  '}${String(t.bpm??'—').padStart(3)} bpm  ${c.padStart(3)} ${keyName(t).padEnd(3)}  ${t.artists.join(', ')} — ${t.name}${jev?`   [${jev}]`:''}`;
 }
 const byBpm = (a,b)=>(a.bpm??999)-(b.bpm??999);
 const SLOT_ORDER = {warmup:0,build:1,peak:2,cooldown:3};
@@ -538,16 +548,42 @@ function fmtAi(t){
   const a=t.ai; if(!a) return '';
   return `${t.artists.join(', ')} — ${t.name}\n  ${a.description||''}\n  mood: ${(a.mood||[]).join(', ')} · energy ${a.energy??'?'} · dance ${a.danceability??'?'} · slot ${a.dj_slot||'?'}\n  vocals: ${a.vocals||'?'} · instruments: ${(a.instruments||[]).join(', ')}\n  ~${a.tempo_bpm??'?'} bpm · ${a.key||'?'}${a.mix_notes?`\n  mix: ${a.mix_notes}`:''}`;
 }
-async function aiDescribe(n=10){
-  const out=$('#aiOut'); out.hidden=false;
-  if(!SB_DESCRIBE_FN){ out.textContent='Функция describe ещё не подключена (SB_DESCRIBE_FN пустой).'; return; }
+const AIP = {
+  steps: [
+    {key:'have',    label:'Уже описано',     src:'Supabase · tracks.ai',            what:'треки библиотеки с AI-описанием'},
+    {key:'preview', label:'Поиск превью',    src:'Deezer (ISRC → поиск) → iTunes',  what:'30-сек mp3/m4a'},
+    {key:'gemini',  label:'Описание звука',  src:'Gemini · слушает превью',         what:'описание, инструменты, вокал, mood, энергия, слот'},
+    {key:'save',    label:'Запись в базу',   src:'Supabase · Edge Function',        what:'tracks.ai'},
+  ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
+  get(k){ return this.steps.find(s=>s.key===k); },
+  set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
+  render(){ $('#aiRows').innerHTML = renderSteps(this.steps); },
+};
+function aiHave(){
+  const n = LIB.filter(t=>t.ai).length;
+  AIP.set('have',{status: SB_DESCRIBE_FN?'done':'skip', total:LIB.length, done:n, note: SB_DESCRIBE_FN?'':'функция describe не подключена'});
+}
+let AI_STOP=false;
+const aiLog = [];
+function aiLogPush(line){ aiLog.unshift(line); $('#aiLog').textContent = aiLog.join('\n\n'); }
+async function aiDescribe(n){
+  if(!SB_DESCRIBE_FN || !LIB.length) return;
   const pick = LIB.filter(t=>!t.ai).sort((a,b)=>(!!b.isrc)-(!!a.isrc)||Math.random()-.5).slice(0,n);
-  if(!pick.length){ out.textContent='Все треки уже описаны.'; return; }
-  $('#aiRun').disabled=true; const lines=[]; let ok=0, fail=0, pauses=0;
+  if(!pick.length){ aiHave(); return; }
+  AI_STOP=false; ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=true); $('#aiStop').disabled=false;
+  const c = {tried:0, found:0, miss:0, ok:0, gfail:0, saved:0, pauses:0};
+  const now=Date.now();
+  AIP.set('preview',{status:'run',total:pick.length,done:0,note:'',t0:now,t1:0});
+  AIP.set('gemini', {status:'run',total:pick.length,done:0,note:'',t0:now,t1:0});
+  AIP.set('save',   {status:'run',total:pick.length,done:0,note:'',t0:now,t1:0});
+  const upd = (note='') => {
+    AIP.set('preview',{done:c.tried, note:`найдено ${c.found} · нет ${c.miss}`});
+    AIP.set('gemini', {total:Math.max(c.found,1), done:c.ok, note:(c.gfail?`ошибок ${c.gfail}`:'')+(note?` · ${note}`:'')});
+    AIP.set('save',   {total:Math.max(c.ok,1), done:c.saved});
+  };
   const queue=[...pick];
-  while(queue.length){
+  while(queue.length && !AI_STOP){
     const part=queue.splice(0,3);
-    out.textContent = `Слушаю… осталось ${queue.length+part.length} из ${pick.length} (~10–15 с на трек)\n\n`+lines.join('\n\n');
     try{
       NET.req++;
       const r = await fetch(`${SB_URL}/functions/v1/${SB_DESCRIBE_FN}`,{method:'POST',
@@ -556,21 +592,32 @@ async function aiDescribe(n=10){
       const j = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(`${r.status}: ${j.error||''}`);
       let wait=0;
-      for(const t of part){ const x=(j.results||[]).find(y=>y.id===t.id);
-        if(x?.ai){ t.ai=x.ai; ok++; lines.push('✅ '+fmtAi(t)); }
-        else if(!x || x.retry){ queue.push(t); wait=Math.max(wait, x?.retry||30); } // квота → в конец очереди
-        else { fail++; lines.push(`✖ ${t.artists[0]} — ${t.name}: ${x.error}`); } }
-      if(wait){ if(++pauses>5){ lines.push(`⏸ квота Gemini не отпускает — остановился, осталось ${queue.length}. Нажми ещё раз позже.`); fail+=queue.length; break; }
-        for(let s=wait;s>0;s--){ out.textContent=`⏸ лимит Gemini, жду ${s}s… (описано ${ok})\n\n`+lines.join('\n\n'); await sleep(1000); } }
-    }catch(e){ fail+=part.length; lines.push('✖ батч упал: '+e.message); }
+      for(const t of part){
+        const x=(j.results||[]).find(y=>y.id===t.id), who=`${t.artists[0]} — ${t.name}`;
+        if(x?.ai){ t.ai=x.ai; c.tried++; c.found++; c.ok++; if(x.saved) c.saved++; aiLogPush('✅ '+fmtAi(t)); }
+        else if(!x || x.retry){ queue.push(t); wait=Math.max(wait, x?.retry||30); }
+        else if(/^(no preview|preview )/.test(x.error||'')){ c.tried++; c.miss++; aiLogPush(`🔇 ${who}: ${x.error}`); }
+        else { c.tried++; c.found++; c.gfail++; aiLogPush(`✖ ${who}: ${x.error}`); }
+      }
+      upd();
+      if(wait){
+        if(++c.pauses>5){ upd(`квота не отпускает, осталось ${queue.length}`); break; }
+        for(let s=wait;s>0 && !AI_STOP;s--){ upd(`⏸ лимит Gemini, жду ${s}s`); await sleep(1000); }
+        upd();
+      }
+    }catch(e){ c.tried+=part.length; c.gfail+=part.length; aiLogPush('✖ батч упал: '+e.message); upd(); }
   }
-  LS.set('lib',LIB); renderList();
-  out.textContent = `Готово: описано ${ok}, не вышло ${fail}\n\n`+lines.join('\n\n');
-  $('#aiRun').disabled=false;
+  const left = pick.length - c.tried;
+  const fin = st => ({status:st, t1:Date.now()});
+  AIP.set('preview', fin(c.miss&&!c.found?'err':'done'));
+  AIP.set('gemini',  {...fin(c.gfail&&!c.ok?'err':(left?'paused':'done')), note:`описано ${c.ok}${c.gfail?` · ошибок ${c.gfail}`:''}${left?` · не дошли ${left}${AI_STOP?' (стоп)':''}`:''}`});
+  AIP.set('save',    fin(c.ok&&c.saved<c.ok?'err':'done'));
+  LS.set('lib',LIB); renderList(); aiHave();
+  ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=false); $('#aiStop').disabled=true;
 }
 
 /* ================= wiring ================= */
-function showApp(tracks){ LIB=tracks; $('#app').hidden=false; renderList(); renderSet(); }
+function showApp(tracks){ LIB=tracks; $('#app').hidden=false; renderList(); renderSet(); aiHave(); }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
   for(const k of ['lib','dj','gen']) $('#tab-'+k).hidden = b.dataset.tab!==k;
@@ -583,8 +630,11 @@ $('#demo').onclick = () => { status('Demo: 60 фейковых треков (с 
 $('#logout').onclick = () => { ['tok','lib','pkce.verifier','me'].forEach(LS.del); location.reload(); };
 $('#reload').onclick = () => runPipeline({refetchLikes:true});
 $('#reclassify').onclick = async () => { try{ await classifyJev(LIB,true); LS.set('lib',LIB); showApp(LIB); status('Jev: переразмечено');}catch(e){status('Ошибка: '+e.message)} };
-$('#aiRun').onclick = () => aiDescribe(10);
-$('#pipeToggle').onclick = () => { $('#pipeRows').hidden = !$('#pipeRows').hidden; };
+$('#aiRun10').onclick = () => aiDescribe(10);
+$('#aiRun50').onclick = () => aiDescribe(50);
+$('#aiRunAll').onclick = () => aiDescribe(1e9);
+$('#aiStop').onclick = () => { AI_STOP=true; $('#aiStop').disabled=true; };
+$('#pipeToggle').onclick = () => { const h=!$('#pipeRows').hidden; $('#pipeRows').hidden=h; $('#aiGrp').hidden=h; $('#pipeToggle').textContent=h?'развернуть':'свернуть'; };
 setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
 
 (async()=>{
