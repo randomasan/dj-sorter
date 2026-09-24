@@ -111,7 +111,9 @@ const LS = {
   set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},
   del:(k)=>{try{localStorage.removeItem(k)}catch{}},
 };
+const DEFAULT_CLIENT_ID = '38e72ce3403d4c508bbca5a7d1996798';
 const REDIRECT = location.origin + location.pathname;
+if(!LS.get('cfg.clientId')) LS.set('cfg.clientId', DEFAULT_CLIENT_ID);
 const SCOPES = 'user-library-read';
 const $ = s => document.querySelector(s);
 const status = t => { $('#status').textContent = t; };
