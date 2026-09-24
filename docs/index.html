@@ -231,8 +231,8 @@ async function sp(url, {maxWait=60000} = {}){
 
 /* ================= DB (Supabase) ================= */
 // Публичные значения (Project URL + publishable/anon key). Пусто → работаем без БД, только localStorage.
-const SB_URL = '';
-const SB_KEY = '';
+const SB_URL = 'https://vnmdnmvogwxqloaxbenk.supabase.co';
+const SB_KEY = 'sb_publishable_gMOOPy8pKjgJKaOAc-1uaQ_2MzRIg9Y';
 const DB_ON = () => !!(SB_URL && SB_KEY);
 async function sb(path, {method='GET', body, prefer}={}){
   NET.req++;
