@@ -229,11 +229,75 @@ async function sp(url, {maxWait=60000} = {}){
   throw new RateLimited(backoff);
 }
 
+/* ================= DB (Supabase) ================= */
+// Публичные значения (Project URL + publishable/anon key). Пусто → работаем без БД, только localStorage.
+const SB_URL = '';
+const SB_KEY = '';
+const DB_ON = () => !!(SB_URL && SB_KEY);
+async function sb(path, {method='GET', body, prefer}={}){
+  NET.req++;
+  const headers = {apikey:SB_KEY,'content-type':'application/json'};
+  if(prefer) headers.Prefer = prefer;
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`,{method,headers,body:body?JSON.stringify(body):undefined});
+  if(!r.ok){ NET.errors++; throw new Error(`DB ${r.status}: ${(await r.text()).slice(0,140)}`); }
+  return method==='GET' ? r.json() : null;
+}
+const chunks = (a,n) => Array.from({length:Math.ceil(a.length/n)},(_,i)=>a.slice(i*n,i*n+n));
+const toRow = t => ({
+  spotify_id:t.id, name:t.name, artists:t.artists, artist_ids:t.artistIds,
+  bpm:t.bpm??null, musical_key:t.key??null, mode:t.mode??null, energy:t.energyAudio??null,
+  features_checked:!!t.featChecked, genres:t.genres??null, styles:t.stylesLf?t.styles:null, jev:t.jev??null,
+  updated_at:new Date().toISOString(),
+});
+// Берём из БД всё, что уже кто-то спарсил, и раскладываем по локальным кэшам → внешние API спрашиваем только про недостающее
+async function stepDbPull(tracks){
+  if(!DB_ON()) return PIPE.finish('db','skip','БД не подключена');
+  PIPE.start('db',{total:tracks.length, done:0});
+  const feat=LS.get('cache.feat',{}), gen=LS.get('cache.genres.v2',{}), sty=LS.get('cache.styles',{}), jev=LS.get('cache.jev',{});
+  const byId = Object.fromEntries(tracks.map(t=>[t.id,t]));
+  let hits=0, seen=0;
+  for(const ids of chunks(tracks.map(t=>t.id),100)){
+    const rows = await sb(`tracks?select=*&spotify_id=in.(${ids.join(',')})`);
+    for(const r of rows){
+      const t = byId[r.spotify_id]; if(!t) continue; hits++;
+      if(r.features_checked) feat[r.spotify_id] = r.bpm!=null ? {bpm:r.bpm,key:r.musical_key,mode:r.mode,energyAudio:r.energy} : null;
+      if(r.genres!=null && !(t.artistIds[0] in gen)) gen[t.artistIds[0]] = r.genres;
+      if(r.styles!=null && !(t.artists[0] in sty)) sty[t.artists[0]] = r.styles;
+      if(r.jev && !jev[r.spotify_id]) jev[r.spotify_id] = r.jev;
+    }
+    seen += ids.length;
+    PIPE.set('db',{done:seen, note:`найдено в базе: ${hits}`});
+  }
+  LS.set('cache.feat',feat); LS.set('cache.genres.v2',gen); LS.set('cache.styles',sty); LS.set('cache.jev',jev);
+  // сразу раскладываем по трекам, чтобы dbPush не затёр известное null-ами
+  tracks.forEach(t=>{ const a=t.artistIds[0], n=t.artists[0];
+    if(a in gen) t.genres=gen[a]; if(n in sty){ t.styles=sty[n]; t.stylesLf=true; } if(jev[t.id]) t.jev=jev[t.id]; });
+  PIPE.finish('db','done',`найдено в базе: ${hits} из ${tracks.length}`);
+}
+async function dbPush(tracks){
+  if(!DB_ON()) return;
+  try{
+    for(const part of chunks(tracks.map(toRow),500))
+      await sb('tracks?on_conflict=spotify_id',{method:'POST',body:part,prefer:'resolution=merge-duplicates,return=minimal'});
+    PIPE.set('db',{note:`сохранено в базу: ${tracks.length}`});
+  }catch(e){ PIPE.set('db',{status:'err',note:e.message}); }
+}
+async function dbUpsertUser(tracks){
+  if(!DB_ON()) return;
+  try{
+    let me = LS.get('me');
+    if(!me){ const j = await sp('/me'); me = {id:j.id, name:j.display_name||j.id}; LS.set('me',me); }
+    await sb('users?on_conflict=spotify_id',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',
+      body:[{spotify_id:me.id, display_name:me.name, liked_ids:tracks.map(t=>t.id), last_seen:new Date().toISOString()}]});
+  }catch(e){ console.warn('user upsert',e); }
+}
+
 /* ================= pipeline + loader ================= */
 // Шаги: что тянем и откуда. total/done заполняются по ходу.
 const PIPE = {
   steps: [
     {key:'likes',  label:'Лайкнутые треки',          src:'Spotify · /me/tracks',            what:'название, артисты, дата лайка'},
+    {key:'db',     label:'База треков',              src:'Supabase · tracks / users',       what:'общий кэш: берём уже спарсенное, сохраняем новое'},
     {key:'feat',   label:'BPM · тональность · energy', src:'ReccoBeats · /audio-features',  what:'tempo, key, mode, energy'},
     {key:'genres', label:'Жанры артистов',           src:'Spotify · /artists/{id}',         what:'genres[] главного артиста'},
     {key:'styles', label:'Стили артистов',           src:'Last.fm · artist.getTopTags',     what:'теги (нужен ключ в ⚙️)'},
@@ -301,7 +365,7 @@ async function stepFeatures(tracks){
     if(i%400===0) LS.set('cache.feat',cache);
   }
   LS.set('cache.feat',cache);
-  tracks.forEach(t=>Object.assign(t, cache[t.id]||{}));
+  tracks.forEach(t=>{ Object.assign(t, cache[t.id]||{}); t.featChecked = t.id in cache; });
   const found = tracks.filter(t=>t.bpm).length;
   PIPE.finish('feat', fails>=3?'err':'done', `найдено BPM: ${found}`);
 }
@@ -329,7 +393,7 @@ async function stepGenres(tracks){
 }
 async function stepStyles(tracks){
   const key = LS.get('cfg.lastfmKey'); const cache = LS.get('cache.styles',{});
-  if(!key){ tracks.forEach(t=>{ t.styles = cache[t.artists[0]] || t.genres.slice(1); }); return PIPE.finish('styles','skip','нет ключа Last.fm'); }
+  if(!key){ tracks.forEach(t=>{ const n=t.artists[0]; t.stylesLf = n in cache; t.styles = cache[n] || (t.genres||[]).slice(1); }); return PIPE.finish('styles','skip','нет ключа Last.fm'); }
   const all=[...new Set(tracks.map(t=>t.artists[0]))]; const names=all.filter(a=>!(a in cache));
   PIPE.start('styles',{total:all.length, done:all.length-names.length, cached:all.length-names.length});
   for(const a of names){
@@ -340,7 +404,7 @@ async function stepStyles(tracks){
     await sleep(210);
   }
   LS.set('cache.styles',cache);
-  tracks.forEach(t=>{ t.styles = cache[t.artists[0]] || t.genres.slice(1); });
+  tracks.forEach(t=>{ const n=t.artists[0]; t.stylesLf = n in cache; t.styles = cache[n] || (t.genres||[]).slice(1); });
   PIPE.finish('styles');
 }
 const jevState = t => `Track: "${t.name}" by ${t.artists.join(', ')}.` +
@@ -387,10 +451,12 @@ async function runPipeline({refetchLikes=false}={}){
       PIPE.set('likes',{status:'done',total:tracks.length,done:tracks.length,cached:tracks.length,note:'Refetch — перетянуть лайки'});
     }
     showApp(tracks);
-    await stepFeatures(tracks); LS.set('lib',tracks); showApp(tracks);
-    await stepGenres(tracks);   LS.set('lib',tracks); showApp(tracks);
+    dbUpsertUser(tracks); // фоном
+    await stepDbPull(tracks);
+    await stepFeatures(tracks); LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
+    await stepGenres(tracks);   LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
     await stepStyles(tracks);   LS.set('lib',tracks);
-    await classifyJev(tracks);  LS.set('lib',tracks); showApp(tracks);
+    await classifyJev(tracks);  LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
     status(`Готово: ${tracks.length.toLocaleString()} треков`);
   }catch(e){
     if(PIPE.cur) PIPE.finish(PIPE.cur,'err',e.message);
@@ -520,7 +586,7 @@ $('#renew').onclick = renderSet; $('#setLen').onchange = renderSet; $('#bpmTol')
 $('#seedFromSet').onclick = () => { $('#genPrompt').value = seedPrompt(); };
 $('#login').onclick = login;
 $('#demo').onclick = () => { status('Demo: 60 фейковых треков (с фейковой Jev-разметкой)'); showApp(demoLibrary()); };
-$('#logout').onclick = () => { ['tok','lib','pkce.verifier'].forEach(LS.del); location.reload(); };
+$('#logout').onclick = () => { ['tok','lib','pkce.verifier','me'].forEach(LS.del); location.reload(); };
 $('#reload').onclick = () => runPipeline({refetchLikes:true});
 $('#reclassify').onclick = async () => { try{ await classifyJev(LIB,true); LS.set('lib',LIB); showApp(LIB); status('Jev: переразмечено');}catch(e){status('Ошибка: '+e.message)} };
 $('#pipeToggle').onclick = () => { $('#pipeRows').hidden = !$('#pipeRows').hidden; };

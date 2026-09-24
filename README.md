@@ -57,3 +57,13 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 ## Настройка Jev
 
 Корзины жанров, mood и шкалу энергии правь в `src/worker.js` → `QUESTIONS`. После изменения нажми на сайте **Re-classify (Jev)**. Цена: платятся только входные токены, библиотека в 1000 треков стоит около цента.
+
+## База (Supabase)
+
+Две таблицы: `tracks` хранит спарсенные треки с параметрами (общие для всех пользователей), `users` хранит пользователей и их лайки. Схема лежит в `db/schema.sql`.
+
+1. На supabase.com создай проект, регион Frankfurt.
+2. Открой **SQL Editor**, вставь `db/schema.sql` целиком и нажми **Run**.
+3. В **Project Settings → API** скопируй Project URL и publishable (anon) key в `docs/index.html` → `SB_URL`, `SB_KEY`.
+
+Без ключей приложение работает как раньше, только на localStorage.
