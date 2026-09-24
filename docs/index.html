@@ -23,6 +23,19 @@
   .note{background:var(--warn);color:var(--warn-fg);border-radius:8px;padding:10px 12px;margin-bottom:12px}
   pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;margin:0;white-space:pre;font-variant-numeric:tabular-nums}
   details{margin-bottom:10px} summary{cursor:pointer;color:var(--mut)}
+  #pipe{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+  .step{padding:6px 0;border-top:1px solid var(--line)} .step:first-child{border-top:0}
+  .sh{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+  .sh .cnt{margin-left:auto;font-variant-numeric:tabular-nums}
+  .ic{width:1em;display:inline-block;text-align:center}
+  .step.run .ic{color:var(--acc);animation:spin 1s linear infinite} .step.done .ic{color:var(--acc)}
+  .step.paused .ic,.step.paused .nt{color:var(--warn-fg)} .step.err .ic,.step.err .nt{color:#d9534f} .step.skip{opacity:.55}
+  .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:4px 0}
+  .bar i{display:block;height:100%;background:var(--acc);transition:width .3s}
+  .step.paused .bar i{background:var(--warn-fg)}
+  .sm{font-size:11px} button.sm{padding:2px 8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion: reduce){.step.run .ic{animation:none}}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -49,6 +62,12 @@
     <button id="logout">Logout</button>
   </div>
   <div id="status"></div>
+  <section id="pipe" hidden>
+    <div class="row" style="justify-content:space-between;margin-bottom:6px">
+      <b>Данные</b><span class="mut sm" id="pipeNet"></span><button id="pipeToggle" class="sm">свернуть</button>
+    </div>
+    <div id="pipeRows"></div>
+  </section>
 
   <div id="app" hidden>
     <div class="row tabs">
@@ -183,109 +202,200 @@ async function accessToken(){
   return LS.get('tok').access;
 }
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
-async function sp(url){
-  for(let i=0;i<5;i++){
+/* ================= net: rate-limit aware ================= */
+const NET = { req:0, r429:0, errors:0 };
+class RateLimited extends Error { constructor(wait){ super('rate limited'); this.wait=wait; } }
+// общий «шлагбаум»: при 429 на паузу встают ВСЕ воркеры, а не каждый сам по себе
+const GATE = { until:0 };
+async function gate(){ const w = GATE.until - Date.now(); if(w>0) await sleep(w); }
+async function sp(url, {maxWait=60000} = {}){
+  let backoff = 2000;
+  for(let i=0;i<6;i++){
+    await gate();
+    NET.req++;
     const r = await fetch(url.startsWith('http')?url:'https://api.spotify.com/v1'+url,{headers:{Authorization:'Bearer '+await accessToken()}});
-    if(r.status===429){ await sleep((+r.headers.get('Retry-After')||2)*1000); continue; }
-    if(!r.ok) throw new Error(`Spotify ${r.status} on ${url}`);
+    if(r.status===429){
+      NET.r429++;
+      const ra = +r.headers.get('Retry-After'); // может быть не виден из-за CORS
+      const wait = ra ? ra*1000 : backoff; backoff = Math.min(backoff*2, 30000);
+      if(wait > maxWait) throw new RateLimited(wait);
+      GATE.until = Date.now() + wait;
+      PIPE.note(`⏸ Spotify rate limit, жду ${Math.ceil(wait/1000)}s`);
+      continue;
+    }
+    if(!r.ok){ NET.errors++; throw new Error(`Spotify ${r.status} on ${url}`); }
     return r.json();
   }
-  throw new Error('Spotify rate limit');
+  throw new RateLimited(backoff);
 }
 
-/* ================= data pipeline ================= */
-async function fetchLiked(){
+/* ================= pipeline + loader ================= */
+// Шаги: что тянем и откуда. total/done заполняются по ходу.
+const PIPE = {
+  steps: [
+    {key:'likes',  label:'Лайкнутые треки',          src:'Spotify · /me/tracks',            what:'название, артисты, дата лайка'},
+    {key:'feat',   label:'BPM · тональность · energy', src:'ReccoBeats · /audio-features',  what:'tempo, key, mode, energy'},
+    {key:'genres', label:'Жанры артистов',           src:'Spotify · /artists/{id}',         what:'genres[] главного артиста'},
+    {key:'styles', label:'Стили артистов',           src:'Last.fm · artist.getTopTags',     what:'теги (нужен ключ в ⚙️)'},
+    {key:'jev',    label:'Разметка Jev',             src:'Jev · Cloudflare Worker',         what:'жанр-корзина, mood, энергия, слот'},
+  ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
+  get(k){ return this.steps.find(s=>s.key===k); },
+  set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
+  cur:null,
+  note(t){ if(this.cur) this.set(this.cur,{note:t}); },
+  start(k,patch={}){ this.cur=k; this.set(k,{status:'run',t0:Date.now(),note:'',...patch}); },
+  finish(k,status='done',note=''){ this.set(k,{status,t1:Date.now(),note}); this.cur=null; },
+  render(){
+    const ICON = {wait:'○',run:'◐',done:'●',skip:'–',paused:'⏸',err:'✖'};
+    $('#pipe').hidden = false;
+    $('#pipeRows').innerHTML = this.steps.map(s=>{
+      const tot = s.total, pct = tot ? Math.round(100*Math.min(s.done,tot)/tot) : (s.status==='done'?100:0);
+      const count = tot!=null ? `${s.done.toLocaleString()} / ${tot.toLocaleString()}` : (s.status==='wait'||s.status==='skip'?'—':'…');
+      const secs = s.t0 ? ((s.t1||Date.now())-s.t0)/1000 : 0;
+      const eta = s.status==='run' && tot && s.done>0 ? ` · ~${Math.max(1,Math.round(secs/s.done*(tot-s.done)))}s` : '';
+      return `<div class="step ${s.status}">
+        <div class="sh"><span class="ic">${ICON[s.status]}</span><b>${s.label}</b><span class="mut src">${s.src}</span><span class="cnt">${count}${eta}</span></div>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+        <div class="mut sm">${s.what}${s.cached?` · из кэша ${s.cached.toLocaleString()}`:''}${s.note?` · <span class="nt">${s.note}</span>`:''}</div>
+      </div>`;
+    }).join('');
+    $('#pipeNet').textContent = `запросов: ${NET.req} · 429: ${NET.r429} · ошибок: ${NET.errors}`;
+  },
+};
+let PIPE_RUNNING = false;
+
+async function stepLikes(total){
+  PIPE.start('likes',{total, done:0});
   const out=[]; let url='/me/tracks?limit=50';
   while(url){
     const j = await sp(url);
     for(const it of j.items){ const t=it.track; if(!t||!t.id) continue;
       out.push({id:t.id,name:t.name,artists:t.artists.map(a=>a.name),artistIds:t.artists.map(a=>a.id),added:it.added_at}); }
-    status(`Лайки: ${out.length}${j.total?' / '+j.total:''}…`);
+    PIPE.set('likes',{done:out.length});
     url = j.next;
   }
+  PIPE.finish('likes');
   return out;
 }
-// BPM/key: Spotify audio-features закрыт для новых приложений → ReccoBeats (через Worker, если он есть)
-async function fetchFeatures(tracks){
+async function stepFeatures(tracks){
   const cache = LS.get('cache.feat',{});
   const todo = tracks.filter(t=>!(t.id in cache)).map(t=>t.id);
+  PIPE.start('feat',{total:tracks.length, done:tracks.length-todo.length, cached:tracks.length-todo.length});
+  let fails=0;
   for(let i=0;i<todo.length;i+=40){
     const ids = todo.slice(i,i+40);
     try{
       const base = BACKEND ? 'api/features?ids=' : 'https://api.reccobeats.com/v1/audio-features?ids=';
+      NET.req++;
       const r = await fetch(base+ids.join(','));
-      if(r.status===429){ await sleep(3000); i-=40; continue; }
+      if(r.status===429){ NET.r429++; PIPE.note('⏸ ReccoBeats rate limit, жду 5s'); await sleep(5000); i-=40; continue; }
+      if(!r.ok) throw new Error('HTTP '+r.status);
       const j = await r.json();
       for(const f of (j.content||[])){
         const sid = (f.href||'').split('/track/')[1]?.split('?')[0];
         if(sid) cache[sid] = {bpm:f.tempo?Math.round(f.tempo):null,key:f.key??null,mode:f.mode??null,energyAudio:f.energy??null};
       }
-    }catch(e){ console.warn('reccobeats',e); }
-    ids.forEach(id=>{ if(!(id in cache)) cache[id]=null; });
-    status(`BPM/key: ${Math.min(i+40,todo.length)} / ${todo.length}…`);
-    await sleep(150);
+      ids.forEach(id=>{ if(!(id in cache)) cache[id]=null; }); // нет в базе ReccoBeats → не спрашиваем снова
+    }catch(e){ NET.errors++; fails++; PIPE.note('ошибка ReccoBeats: '+e.message); if(fails>=3){ break; } }
+    PIPE.set('feat',{done:Math.min(tracks.length, tracks.length-todo.length+i+40)});
+    if(i%400===0) LS.set('cache.feat',cache);
   }
   LS.set('cache.feat',cache);
   tracks.forEach(t=>Object.assign(t, cache[t.id]||{}));
+  const found = tracks.filter(t=>t.bpm).length;
+  PIPE.finish('feat', fails>=3?'err':'done', `найдено BPM: ${found}`);
 }
-// жанры Spotify (batch-эндпоинт выпилен в 02/2026 → по одному артисту, с кэшем)
-async function fetchGenres(tracks){
+async function stepGenres(tracks){
   const cache = LS.get('cache.genres',{});
-  const ids = [...new Set(tracks.map(t=>t.artistIds[0]))].filter(id=>!(id in cache));
-  let n=0;
-  const worker = async () => { while(ids.length){ const id=ids.shift();
-    try{ cache[id]=(await sp('/artists/'+id)).genres||[]; }catch{ cache[id]=[]; }
-    if(++n%10===0){ status(`Жанры артистов: ${n}…`); LS.set('cache.genres',cache); } } };
-  await Promise.all([worker(),worker(),worker()]);
+  const all = [...new Set(tracks.map(t=>t.artistIds[0]))];
+  const ids = all.filter(id=>!(id in cache));
+  PIPE.start('genres',{total:all.length, done:all.length-ids.length, cached:all.length-ids.length});
+  let stopped = null, n=0;
+  const worker = async () => {
+    while(ids.length && !stopped){
+      const id = ids.shift();
+      try{ cache[id] = (await sp('/artists/'+id)).genres||[]; }
+      catch(e){ if(e instanceof RateLimited){ stopped=e; ids.unshift(id); } else cache[id]=[]; }
+      PIPE.set('genres',{done:all.length-ids.length});
+      if(++n%25===0) LS.set('cache.genres',cache);
+      await sleep(120); // мягкий темп, чтобы не ловить 429
+    }
+  };
+  await Promise.all([worker(),worker()]);
   LS.set('cache.genres',cache);
   tracks.forEach(t=>{ t.genres = cache[t.artistIds[0]]||[]; });
+  if(stopped) PIPE.finish('genres','paused',`Spotify просит подождать ~${Math.ceil(stopped.wait/60000)} мин. Осталось ${ids.length} — догружу по Refetch`);
+  else PIPE.finish('genres','done', `с жанрами: ${tracks.filter(t=>t.genres.length).length} треков`);
 }
-// стили: Last.fm top tags (опционально)
-async function fetchStyles(tracks){
+async function stepStyles(tracks){
   const key = LS.get('cfg.lastfmKey'); const cache = LS.get('cache.styles',{});
-  if(key){
-    const names=[...new Set(tracks.map(t=>t.artists[0]))].filter(a=>!(a in cache)); let n=0;
-    for(const a of names){
-      try{ const j=await (await fetch(`https://ws.audioscrobbler.com/2.0/?method=artist.gettoptags&artist=${encodeURIComponent(a)}&api_key=${key}&format=json`)).json();
-        cache[a]=(j.toptags?.tag||[]).filter(x=>x.count>=10).slice(0,4).map(x=>x.name.toLowerCase()); }catch{ cache[a]=[]; }
-      if(++n%20===0){ status(`Last.fm стили: ${n} / ${names.length}…`); LS.set('cache.styles',cache); }
-      await sleep(210);
-    }
-    LS.set('cache.styles',cache);
+  if(!key){ tracks.forEach(t=>{ t.styles = cache[t.artists[0]] || t.genres.slice(1); }); return PIPE.finish('styles','skip','нет ключа Last.fm'); }
+  const all=[...new Set(tracks.map(t=>t.artists[0]))]; const names=all.filter(a=>!(a in cache));
+  PIPE.start('styles',{total:all.length, done:all.length-names.length, cached:all.length-names.length});
+  for(const a of names){
+    try{ NET.req++; const j=await (await fetch(`https://ws.audioscrobbler.com/2.0/?method=artist.gettoptags&artist=${encodeURIComponent(a)}&api_key=${key}&format=json`)).json();
+      cache[a]=(j.toptags?.tag||[]).filter(x=>x.count>=10).slice(0,4).map(x=>x.name.toLowerCase()); }catch{ NET.errors++; }
+    PIPE.set('styles',{done:PIPE.get('styles').done+1});
+    if(PIPE.get('styles').done%25===0) LS.set('cache.styles',cache);
+    await sleep(210);
   }
+  LS.set('cache.styles',cache);
   tracks.forEach(t=>{ t.styles = cache[t.artists[0]] || t.genres.slice(1); });
+  PIPE.finish('styles');
 }
-// Jev: классификация треков (genre / mood / energy / slot / vocal)
 const jevState = t => `Track: "${t.name}" by ${t.artists.join(', ')}.` +
   (t.genres?.length ? ` Artist genres: ${t.genres.slice(0,5).join(', ')}.` : '') +
   (t.styles?.length ? ` Tags: ${t.styles.slice(0,4).join(', ')}.` : '') +
   (t.bpm ? ` Tempo: ${t.bpm} bpm.` : '');
 async function classifyJev(tracks, force=false){
-  if(!BACKEND) return;
+  if(!BACKEND){ tracks.forEach(t=>{ t.jev = LS.get('cache.jev',{})[t.id]||null; }); return PIPE.finish('jev','skip','нет бэкенда (GitHub Pages) — подключим позже'); }
   const cache = force ? {} : LS.get('cache.jev',{});
   const todo = tracks.filter(t=>!cache[t.id]);
+  PIPE.start('jev',{total:tracks.length, done:tracks.length-todo.length, cached:tracks.length-todo.length});
   for(let i=0;i<todo.length;i+=20){
     const batch = todo.slice(i,i+20).map(t=>({id:t.id,text:jevState(t)}));
     try{
+      NET.req++;
       const r = await fetch('api/classify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tracks:batch})});
       const j = await r.json();
       for(const x of (j.results||[])) if(!x.error) cache[x.id]={genre:x.genre,gc:x.gc,mood:x.mood,energy:x.energy,slot:x.slot,vocal:x.vocal};
-    }catch(e){ console.warn('jev',e); }
-    status(`Jev: ${Math.min(i+20,todo.length)} / ${todo.length}…`);
+    }catch(e){ NET.errors++; }
+    PIPE.set('jev',{done:Math.min(tracks.length, tracks.length-todo.length+i+20)});
     LS.set('cache.jev',cache);
   }
   tracks.forEach(t=>{ t.jev = cache[t.id]||null; });
+  PIPE.finish('jev');
 }
-async function loadLibrary(force=false){
-  if(!force && LS.get('lib')) { const l=LS.get('lib'); await classifyJev(l); LS.set('lib',l); return l; }
-  status('Тяну лайки…');
-  const tracks = await fetchLiked();
-  await fetchFeatures(tracks);
-  await fetchGenres(tracks);
-  await fetchStyles(tracks);
-  await classifyJev(tracks);
-  LS.set('lib',tracks);
-  return tracks;
+
+// Весь пайплайн. Показываем библиотеку сразу после лайков, дальше дообогащаем.
+async function runPipeline({refetchLikes=false}={}){
+  if(PIPE_RUNNING) return; PIPE_RUNNING = true;
+  $('#reload').disabled = true;
+  PIPE.steps.forEach(s=>Object.assign(s,{status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0}));
+  try{
+    let tracks = LS.get('lib');
+    if(!tracks || refetchLikes){
+      // 1) сначала узнаём объём — и сразу показываем пользователю план
+      const head = await sp('/me/tracks?limit=1');
+      const total = head.total;
+      PIPE.set('likes',{total, note:`~${Math.ceil(total/50)} запросов`});
+      PIPE.set('feat',{total, note:`~${Math.ceil(total/40)} запросов`});
+      status(`В библиотеке ${total.toLocaleString()} лайков. Тяну…`);
+      tracks = await stepLikes(total);
+      LS.set('lib', tracks);
+    } else {
+      PIPE.set('likes',{status:'done',total:tracks.length,done:tracks.length,cached:tracks.length,note:'Refetch — перетянуть лайки'});
+    }
+    showApp(tracks);
+    await stepFeatures(tracks); LS.set('lib',tracks); showApp(tracks);
+    await stepGenres(tracks);   LS.set('lib',tracks); showApp(tracks);
+    await stepStyles(tracks);   LS.set('lib',tracks);
+    await classifyJev(tracks);  LS.set('lib',tracks); showApp(tracks);
+    status(`Готово: ${tracks.length.toLocaleString()} треков`);
+  }catch(e){
+    if(PIPE.cur) PIPE.finish(PIPE.cur,'err',e.message);
+    status('Ошибка: '+e.message); console.error(e);
+  }finally{ PIPE_RUNNING=false; $('#reload').disabled=false; PIPE.render(); }
 }
 
 /* ================= demo ================= */
@@ -411,16 +521,19 @@ $('#seedFromSet').onclick = () => { $('#genPrompt').value = seedPrompt(); };
 $('#login').onclick = login;
 $('#demo').onclick = () => { status('Demo: 60 фейковых треков (с фейковой Jev-разметкой)'); showApp(demoLibrary()); };
 $('#logout').onclick = () => { ['tok','lib','pkce.verifier'].forEach(LS.del); location.reload(); };
-$('#reload').onclick = async () => { try{ showApp(await loadLibrary(true)); status(`Готово: ${LIB.length} треков`);}catch(e){status('Ошибка: '+e.message)} };
+$('#reload').onclick = () => runPipeline({refetchLikes:true});
 $('#reclassify').onclick = async () => { try{ await classifyJev(LIB,true); LS.set('lib',LIB); showApp(LIB); status('Jev: переразмечено');}catch(e){status('Ошибка: '+e.message)} };
+$('#pipeToggle').onclick = () => { $('#pipeRows').hidden = !$('#pipeRows').hidden; };
+setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
 
 (async()=>{
   try{
     await detectBackend();
+    PIPE.render(); // сразу показываем, что и откуда будем тянуть
     await handleCallback();
     if(LS.get('tok')){
       $('#reload').disabled=false; $('#reclassify').disabled=!BACKEND; $('#login').textContent='Reconnect';
-      showApp(await loadLibrary()); status(`Готово: ${LIB.length} треков`);
+      await runPipeline(); // с кэшем: лайки не перетягиваем, догружаем только недостающее
     }
   }catch(e){ status('Ошибка: '+e.message); console.error(e); }
 })();
