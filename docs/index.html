@@ -306,7 +306,7 @@ async function stepFeatures(tracks){
   PIPE.finish('feat', fails>=3?'err':'done', `найдено BPM: ${found}`);
 }
 async function stepGenres(tracks){
-  const cache = LS.get('cache.genres',{});
+  const cache = LS.get('cache.genres.v2',{});
   const all = [...new Set(tracks.map(t=>t.artistIds[0]))];
   const ids = all.filter(id=>!(id in cache));
   PIPE.start('genres',{total:all.length, done:all.length-ids.length, cached:all.length-ids.length});
@@ -317,12 +317,12 @@ async function stepGenres(tracks){
       try{ cache[id] = (await sp('/artists/'+id)).genres||[]; }
       catch(e){ if(e instanceof RateLimited){ stopped=e; ids.unshift(id); } else cache[id]=[]; }
       PIPE.set('genres',{done:all.length-ids.length});
-      if(++n%25===0) LS.set('cache.genres',cache);
+      if(++n%25===0) LS.set('cache.genres.v2',cache);
       await sleep(120); // мягкий темп, чтобы не ловить 429
     }
   };
   await Promise.all([worker(),worker()]);
-  LS.set('cache.genres',cache);
+  LS.set('cache.genres.v2',cache);
   tracks.forEach(t=>{ t.genres = cache[t.artistIds[0]]||[]; });
   if(stopped) PIPE.finish('genres','paused',`Spotify просит подождать ~${Math.ceil(stopped.wait/60000)} мин. Осталось ${ids.length} — догружу по Refetch`);
   else PIPE.finish('genres','done', `с жанрами: ${tracks.filter(t=>t.genres.length).length} треков`);
