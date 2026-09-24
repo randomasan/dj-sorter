@@ -14,7 +14,7 @@
 
 | Что | Источник |
 |---|---|
-| Лайки, жанры артистов | Spotify Web API |
+| Лайки | Spotify Web API (жанры Spotify не используем: по одному запросу на артиста + жёсткий rate limit) |
 | BPM, тональность, energy | [ReccoBeats](https://reccobeats.com) по Spotify ID (audio-features Spotify закрыт для новых приложений) |
 | Жанр-корзина, mood, энергия, слот, вокал | **Jev** (`typesafe/jev` в Workers AI), вопросы задаются в `src/worker.js` → `QUESTIONS` |
 | Стили артиста (опционально) | Last.fm top tags |

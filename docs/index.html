@@ -80,7 +80,7 @@
       <div class="row">
         <span class="mut">Sort:</span>
         <select id="sortBy">
-          <option value="genre">Жанр (Jev → Spotify)</option>
+          <option value="genre">Жанр (Jev → Last.fm)</option>
           <option value="key">Тональность (Camelot)</option>
           <option value="bpm">BPM</option>
           <option value="energy">Энергия (Jev)</option>
@@ -306,7 +306,6 @@ const PIPE = {
     {key:'likes',  label:'Лайкнутые треки',          src:'Spotify · /me/tracks',            what:'название, артисты, дата лайка'},
     {key:'db',     label:'База треков',              src:'Supabase · tracks / users',       what:'общий кэш: берём уже спарсенное, сохраняем новое'},
     {key:'feat',   label:'BPM · тональность · energy', src:'ReccoBeats · /audio-features',  what:'tempo, key, mode, energy'},
-    {key:'genres', label:'Жанры артистов',           src:'Spotify · /artists/{id}',         what:'genres[] главного артиста'},
     {key:'styles', label:'Стили артистов',           src:'Last.fm · artist.getTopTags',     what:'теги (нужен ключ в ⚙️)'},
     {key:'jev',    label:'Разметка Jev',             src:'Jev · Cloudflare Worker',         what:'жанр-корзина, mood, энергия, слот'},
   ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
@@ -376,28 +375,6 @@ async function stepFeatures(tracks){
   const found = tracks.filter(t=>t.bpm).length;
   PIPE.finish('feat', fails>=3?'err':'done', `найдено BPM: ${found}`);
 }
-async function stepGenres(tracks){
-  const cache = LS.get('cache.genres.v2',{});
-  const all = [...new Set(tracks.map(t=>t.artistIds[0]))];
-  const ids = all.filter(id=>!(id in cache));
-  PIPE.start('genres',{total:all.length, done:all.length-ids.length, cached:all.length-ids.length});
-  let stopped = null, n=0;
-  const worker = async () => {
-    while(ids.length && !stopped){
-      const id = ids.shift();
-      try{ cache[id] = (await sp('/artists/'+id)).genres||[]; }
-      catch(e){ if(e instanceof RateLimited){ stopped=e; ids.unshift(id); } else cache[id]=[]; }
-      PIPE.set('genres',{done:all.length-ids.length});
-      if(++n%25===0) LS.set('cache.genres.v2',cache);
-      await sleep(120); // мягкий темп, чтобы не ловить 429
-    }
-  };
-  await Promise.all([worker(),worker()]);
-  LS.set('cache.genres.v2',cache);
-  tracks.forEach(t=>{ t.genres = cache[t.artistIds[0]]||[]; });
-  if(stopped) PIPE.finish('genres','paused',`Spotify просит подождать ~${Math.ceil(stopped.wait/60000)} мин. Осталось ${ids.length} — догружу по Refetch`);
-  else PIPE.finish('genres','done', `с жанрами: ${tracks.filter(t=>t.genres.length).length} треков`);
-}
 async function stepStyles(tracks){
   const key = LS.get('cfg.lastfmKey'); const cache = LS.get('cache.styles',{});
   if(!key){ tracks.forEach(t=>{ const n=t.artists[0]; t.stylesLf = n in cache; t.styles = cache[n] || (t.genres||[]).slice(1); }); return PIPE.finish('styles','skip','нет ключа Last.fm'); }
@@ -461,7 +438,6 @@ async function runPipeline({refetchLikes=false}={}){
     dbUpsertUser(tracks); // фоном
     await stepDbPull(tracks);
     await stepFeatures(tracks); LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
-    await stepGenres(tracks);   LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
     await stepStyles(tracks);   LS.set('lib',tracks);
     await classifyJev(tracks);  LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
     status(`Готово: ${tracks.length.toLocaleString()} треков`);
@@ -486,7 +462,7 @@ function demoLibrary(){
 /* ================= helpers ================= */
 let LIB=[];
 const energyOf = t => t.jev?.energy ?? (t.energyAudio!=null ? t.energyAudio*4 : null); // 0..4
-const primaryGenre = t => t.jev?.genre || t.genres?.[0] || '— no genre';
+const primaryGenre = t => t.jev?.genre || t.genres?.[0] || t.styles?.[0] || '— no genre';
 const primaryStyle = t => t.styles?.[0] || '— no style';
 const unsure = t => t.jev && t.jev.gc!=null && t.jev.gc<0.5 ? '?' : ' ';
 function line(t){
