@@ -1,142 +1,260 @@
-// Loader visual: «сигналы бегут по проводам внутри формы».
-// Своя реализация по мотивам https://codepen.io/sabosugi/pen/emzdzmy (Trails in Forms – Three.js)
+// Loader visual — «Trails in Forms» by sabosugi: https://codepen.io/sabosugi/pen/emzdzmy
+// Оригинальная реализация пена, встроенная в контейнер (вместо window) + setActive() для ускорения во время загрузки.
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-export const LOADER_DEFAULTS = {
-  form: 'sphere',        // Form Factor
-  onlyExternal: false,   // Only External (только по поверхности)
-  background: 0x141414,
-  wire: 0x5c5c5c,
-  signal: 0x33fff1,
-  flowSpeed: 0.1,
-  signalTail: 0.01,
-  density: 1.809,        // Density (1/Freq)
-  fog: true,
-  fogDensity: 0.0275,
-  radius: 9,
-  walks: 120,
-  steps: 70,
-};
+export function mountLoader(container) {
+  const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
 
-export function mountLoader(canvas, opts = {}) {
-  const P = { ...LOADER_DEFAULTS, ...opts };
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setClearColor(P.background, 1);
+  // --- 1. Scene Setup ---
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
-  camera.position.set(0, 4, 30);
-  camera.lookAt(0, 0, 0);
 
-  // ---- геометрия: случайные блуждания по решётке внутри сферы ----
-  const R = P.radius, R2 = R * R;
-  const inside = (x, y, z) => x * x + y * y + z * z <= R2;
-  const onSurface = (x, y, z) => inside(x, y, z) &&
-    [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]].some(([a,b,c]) => !inside(x+a, y+b, z+c));
-  const ok = P.onlyExternal ? onSurface : inside;
-  const DIRS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
-  const rnd = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
+  // Настройки — как на скрине
+  const params = {
+    shape: 'Sphere',
+    backgroundColor: '#141414',
+    lineColor: '#5c5c5c',
+    dotColor: '#33fff1',
+    useFog: true,
+    fogDensity: 0.0275,
+    useBloom: false,
+    bloomThreshold: 0.385,
+    bloomStrength: 1.5,
+    bloomRadius: 0.4,
+    onlyExternal: false,
+    speed: 0.1,
+    dotLength: 0.01,
+    dotDensity: 1.809,
+  };
 
-  const pos = [], prog = [], off = [];
-  for (let w = 0; w < P.walks; w++) {
-    let p;
-    for (let tries = 0; tries < 200; tries++) { p = [rnd(-R, R), rnd(-R, R), rnd(-R, R)]; if (ok(...p)) break; }
-    if (!ok(...p)) continue;
-    let dist = 0, last = -1; const o = Math.random() * 100;
-    for (let s = 0; s < P.steps; s++) {
-      const cand = DIRS.map((d, i) => [d, i]).filter(([d, i]) => (i ^ 1) !== last && ok(p[0]+d[0], p[1]+d[1], p[2]+d[2]));
-      if (!cand.length) break;
-      // инерция: чаще продолжаем в том же направлении — линии получаются «проводами», а не шумом
-      const same = cand.find(([, i]) => i === last);
-      const [d, i] = same && Math.random() < 0.55 ? same : cand[Math.floor(Math.random() * cand.length)];
-      const q = [p[0]+d[0], p[1]+d[1], p[2]+d[2]];
-      pos.push(...p, ...q); prog.push(dist, dist + 1); off.push(o, o);
-      dist += 1; p = q; last = i;
+  scene.background = new THREE.Color(params.backgroundColor);
+  scene.fog = new THREE.FogExp2(params.backgroundColor, params.fogDensity);
+
+  const camera = new THREE.PerspectiveCamera(60, W() / H(), 0.1, 1000);
+  camera.position.set(0, -1, 30);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(W(), H());
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ReinhardToneMapping;
+  container.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.enableZoom = false;       // колесо мыши скроллит страницу, а не зумит сцену
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 0.5;
+
+  // --- 2. Post Processing (Bloom) ---
+  const renderScene = new RenderPass(scene, camera);
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(W(), H()), 1.5, 0.4, 0.85);
+  bloomPass.threshold = params.bloomThreshold;
+  bloomPass.strength = params.bloomStrength;
+  bloomPass.radius = params.bloomRadius;
+  const composer = new EffectComposer(renderer);
+  composer.addPass(renderScene);
+  composer.addPass(bloomPass);
+
+  // --- 3. Math & Geometry Logic ---
+  function isPointInside(v, shapeType) {
+    const x = v.x, y = v.y, z = v.z;
+    const r = 12;
+    switch (shapeType) {
+      case 'Cube': return Math.abs(x) < r && Math.abs(y) < r && Math.abs(z) < r;
+      case 'Sphere': return (x*x + y*y + z*z) < (r*r);
+      case 'Pyramid': {
+        if (y < -r || y > r) return false;
+        const scale = (r - y) / (2 * r);
+        const limit = r * 2 * scale;
+        return Math.abs(x) < limit && Math.abs(z) < limit;
+      }
+      case 'Hexagon': {
+        if (Math.abs(y) > r) return false;
+        const q2 = Math.abs(x), r2 = Math.abs(z);
+        return (q2 * 0.866 + r2 * 0.5) < r && q2 < r;
+      }
+      case 'Torus': {
+        const tubeRadius = 4, mainRadius = 10;
+        const distXZ = Math.sqrt(x*x + z*z) - mainRadius;
+        return (distXZ*distXZ + y*y) < (tubeRadius*tubeRadius);
+      }
+      default: return Math.abs(x) < r && Math.abs(y) < r && Math.abs(z) < r;
     }
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('aProg', new THREE.Float32BufferAttribute(prog, 1));
-  geo.setAttribute('aOff', new THREE.Float32BufferAttribute(off, 1));
 
-  const uniforms = {
-    uTime: { value: 0 },
-    uSpeed: { value: P.flowSpeed },
-    uBoost: { value: 1 },
-    uTail: { value: P.signalTail },
-    uPeriod: { value: P.density * 8 },
-    uWire: { value: new THREE.Color(P.wire) },
-    uSignal: { value: new THREE.Color(P.signal) },
-    uBg: { value: new THREE.Color(P.background) },
-    uFog: { value: P.fog ? P.fogDensity : 0 },
-  };
-  const mat = new THREE.ShaderMaterial({
-    uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    vertexShader: `
-      attribute float aProg; attribute float aOff;
-      varying float vProg; varying float vOff; varying float vDepth;
-      void main(){
-        vProg = aProg; vOff = aOff;
-        vec4 mv = modelViewMatrix * vec4(position,1.0);
-        vDepth = -mv.z;
-        gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: `
-      uniform float uTime, uSpeed, uBoost, uTail, uPeriod, uFog;
-      uniform vec3 uWire, uSignal, uBg;
-      varying float vProg; varying float vOff; varying float vDepth;
-      void main(){
-        // голова сигнала движется вдоль пути; хвост тянется назад
-        float head = uTime * uSpeed * 60.0 * uBoost + vOff;
-        float d = mod(head - vProg, uPeriod);          // расстояние от головы назад по пути
-        float tail = max(0.35, uTail * 90.0);
-        float s = 1.0 - smoothstep(0.0, tail, d);
-        s *= step(0.0, d);
-        vec3 col = uWire * 0.55 + uSignal * s * 1.6;
-        float fog = uFog > 0.0 ? 1.0 - exp(-pow(vDepth * uFog, 2.0)) : 0.0;
-        col = mix(col, uBg, clamp(fog, 0.0, 1.0));
-        gl_FragColor = vec4(col, 1.0);
-      }`,
+  function isSurface(v, shapeType, step) {
+    if (!isPointInside(v, shapeType)) return false;
+    const dirs = [
+      new THREE.Vector3(step,0,0), new THREE.Vector3(-step,0,0),
+      new THREE.Vector3(0,step,0), new THREE.Vector3(0,-step,0),
+      new THREE.Vector3(0,0,step), new THREE.Vector3(0,0,-step)
+    ];
+    for (const d of dirs) if (!isPointInside(v.clone().add(d), shapeType)) return true;
+    return false;
+  }
+
+  function createShapeGeometry(shapeType, onlyExternal) {
+    const positions = [], attributes = [];
+    const step = 2, maxSegments = 6000;
+    let currentPos = new THREE.Vector3(0, 0, 0);
+    let currentDist = 0;
+
+    const findStartPoint = () => {
+      const p = new THREE.Vector3();
+      for (let k = 0; k < 200; k++) {
+        p.set((Math.random()-0.5)*26, (Math.random()-0.5)*26, (Math.random()-0.5)*26).round();
+        p.x = Math.round(p.x/step)*step; p.y = Math.round(p.y/step)*step; p.z = Math.round(p.z/step)*step;
+        if (onlyExternal ? isSurface(p, shapeType, step) : isPointInside(p, shapeType)) return p;
+      }
+      return new THREE.Vector3(0,0,0);
+    };
+
+    currentPos = findStartPoint();
+    for (let i = 0; i < maxSegments; i++) {
+      const dirs = [
+        new THREE.Vector3(step,0,0), new THREE.Vector3(-step,0,0),
+        new THREE.Vector3(0,step,0), new THREE.Vector3(0,-step,0),
+        new THREE.Vector3(0,0,step), new THREE.Vector3(0,0,-step)
+      ];
+      const nextPos = currentPos.clone().add(dirs[Math.floor(Math.random() * 6)]);
+      const isValid = onlyExternal ? isSurface(nextPos, shapeType, step) : isPointInside(nextPos, shapeType);
+      if (isValid) {
+        positions.push(currentPos.x, currentPos.y, currentPos.z, nextPos.x, nextPos.y, nextPos.z);
+        attributes.push(currentDist, currentDist + step);
+        currentDist += step;
+        currentPos.copy(nextPos);
+      } else {
+        currentDist += 50.0;
+        currentPos = findStartPoint();
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('lineDistance', new THREE.Float32BufferAttribute(attributes, 1));
+    return geometry;
+  }
+
+  // --- 4. Shader ---
+  const vertexShader = `
+    attribute float lineDistance;
+    varying float vDistance;
+    void main() {
+      vDistance = lineDistance;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`;
+  const fragmentShader = `
+    uniform vec3 colorLine;
+    uniform vec3 colorDot;
+    uniform float uTime;
+    uniform float uSpeed;
+    uniform float uDotLength;
+    uniform float uDotRepeat;
+    uniform vec3 uFogColor;
+    uniform float uFogDensity;
+    uniform bool uUseFog;
+    varying float vDistance;
+    void main() {
+      float alpha = 0.2;
+      float distanceState = vDistance - uTime * uSpeed * 10.0;
+      float flow = mod(distanceState, uDotRepeat * 10.0);
+      float lengthVal = (uDotRepeat * 10.0) * uDotLength;
+      float signal = smoothstep((uDotRepeat * 10.0) - lengthVal, (uDotRepeat * 10.0), flow);
+      if (flow < (uDotRepeat * 10.0) - lengthVal) signal = 0.0;
+      vec3 finalColor = mix(colorLine, colorDot, signal);
+      float finalAlpha = max(alpha, signal);
+      gl_FragColor = vec4(finalColor, finalAlpha);
+      if (uUseFog) {
+        float depth = gl_FragCoord.z / gl_FragCoord.w;
+        float fogFactor = exp2(-uFogDensity * uFogDensity * depth * depth * 1.442695);
+        fogFactor = clamp(fogFactor, 0.0, 1.0);
+        gl_FragColor.rgb = mix(uFogColor, gl_FragColor.rgb, fogFactor);
+      }
+    }`;
+
+  const material = new THREE.ShaderMaterial({
+    vertexShader, fragmentShader,
+    uniforms: {
+      colorLine: { value: new THREE.Color(params.lineColor) },
+      colorDot: { value: new THREE.Color(params.dotColor) },
+      uTime: { value: 0 },
+      uSpeed: { value: params.speed },
+      uDotLength: { value: params.dotLength },
+      uDotRepeat: { value: params.dotDensity },
+      uFogColor: { value: new THREE.Color(params.backgroundColor) },
+      uFogDensity: { value: params.fogDensity },
+      uUseFog: { value: params.useFog },
+    },
+    transparent: true, depthTest: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
   });
-  const lines = new THREE.LineSegments(geo, mat);
-  const group = new THREE.Group(); group.add(lines); scene.add(group);
 
-  // ---- размер / цикл ----
-  const resize = () => {
-    const w = canvas.clientWidth, h = canvas.clientHeight;
-    if (!w || !h) return;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    // сфера целиком в кадре при любой ширине
-    // вписываем сферу по высоте (и по ширине на узких экранах) с небольшим запасом
-    const fitH = (R * 1.12) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    camera.position.z = Math.max(fitH, fitH / Math.min(camera.aspect, 1));
-    camera.updateProjectionMatrix();
+  let mesh = new THREE.LineSegments(createShapeGeometry(params.shape, params.onlyExternal), material);
+  scene.add(mesh);
+
+  // --- 5. GUI (свёрнута, в углу визуала) ---
+  const gui = new GUI({ title: 'System Core', container });
+  gui.domElement.classList.add('viz-gui');
+  const rebuildGeo = () => {
+    scene.remove(mesh); mesh.geometry.dispose();
+    mesh = new THREE.LineSegments(createShapeGeometry(params.shape, params.onlyExternal), material);
+    scene.add(mesh);
   };
-  new ResizeObserver(resize).observe(canvas); resize();
+  const fGeo = gui.addFolder('Geometry');
+  fGeo.add(params, 'shape', ['Cube', 'Sphere', 'Pyramid', 'Hexagon', 'Torus']).name('Form Factor').onChange(rebuildGeo);
+  fGeo.add(params, 'onlyExternal').name('Only External').onChange(rebuildGeo);
+  const fColors = gui.addFolder('Colors');
+  fColors.addColor(params, 'backgroundColor').name('Background').onChange(val => {
+    scene.background.set(val); scene.fog.color.set(val); material.uniforms.uFogColor.value.set(val);
+  });
+  fColors.addColor(params, 'lineColor').name('Wire Color').onChange(val => material.uniforms.colorLine.value.set(val));
+  fColors.addColor(params, 'dotColor').name('Signal Color').onChange(val => material.uniforms.colorDot.value.set(val));
+  const fSignal = gui.addFolder('Signal Props');
+  fSignal.add(params, 'speed', 0.1, 2.0).name('Flow Speed').onChange(val => material.uniforms.uSpeed.value = val);
+  fSignal.add(params, 'dotLength', 0.01, 0.5).name('Signal Tail').onChange(val => material.uniforms.uDotLength.value = val);
+  fSignal.add(params, 'dotDensity', 1.0, 10.0).name('Density (1/Freq)').onChange(val => material.uniforms.uDotRepeat.value = val);
+  const fRender = gui.addFolder('Rendering');
+  fRender.add(params, 'useFog').name('Fog Enabled').onChange(val => { material.uniforms.uUseFog.value = val; });
+  fRender.add(params, 'fogDensity', 0.0, 0.1).name('Fog Density').onChange(val => { scene.fog.density = val; material.uniforms.uFogDensity.value = val; });
+  fRender.add(params, 'useBloom').name('Bloom Effect');
+  fRender.add(params, 'bloomThreshold', 0.0, 1.0).name('Bloom Thresh').onChange(val => bloomPass.threshold = val);
+  fRender.add(params, 'bloomStrength', 0.0, 3.0).name('Bloom Strength').onChange(val => bloomPass.strength = val);
+  fRender.add(params, 'bloomRadius', 0.0, 1.0).name('Bloom Radius').onChange(val => bloomPass.radius = val);
+  gui.close();
 
-  let t = 0, last = performance.now(), running = true, boostTarget = 1;
-  const frame = (now) => {
+  // --- 6. Animation ---
+  // uTime накапливаем сами: смена скорости (boost во время загрузки) идёт плавно, без скачка сигналов
+  const clock = new THREE.Clock();
+  let t = 0, boost = 1, boostTarget = 1, running = true;
+  function animate() {
     if (!running) return;
-    const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    uniforms.uBoost.value += (boostTarget - uniforms.uBoost.value) * Math.min(1, dt * 3);
-    t += dt; uniforms.uTime.value = t;
-    group.rotation.y += dt * 0.08 * uniforms.uBoost.value;
-    group.rotation.x = Math.sin(t * 0.15) * 0.12;
-    renderer.render(scene, camera);
-    if (!reduce) requestAnimationFrame(frame);
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), 0.05);
+    boost += (boostTarget - boost) * Math.min(1, dt * 3);
+    t += dt * boost;
+    material.uniforms.uTime.value = t;
+    controls.autoRotateSpeed = 0.5 * boost;
+    controls.update();
+    if (params.useBloom) composer.render(); else renderer.render(scene, camera);
+  }
+
+  const resize = () => {
+    camera.aspect = W() / H();
+    camera.updateProjectionMatrix();
+    renderer.setSize(W(), H());
+    composer.setSize(W(), H());
   };
-  requestAnimationFrame(frame);
+  new ResizeObserver(resize).observe(container);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) running = false;
-    else if (!running) { running = true; last = performance.now(); requestAnimationFrame(frame); }
+    else if (!running) { running = true; clock.getDelta(); animate(); }
   });
+  animate();
 
   return {
-    // активная загрузка → сигналы бегут быстрее
     setActive(on) { boostTarget = on ? 3.5 : 1; },
-    setSignal(hex) { uniforms.uSignal.value.set(hex); },
+    params,
   };
 }

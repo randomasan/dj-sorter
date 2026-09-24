@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DJ Sorter</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
-<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
 <style>
   :root{--bg:#f3f5f2;--fg:#15181c;--mut:#5d6570;--acc:#138a3e;--acc-fg:#fff;--line:#d5dad6;--card:#fff;--warn:#fff4d6;--warn-fg:#6b4e00}
   @media (prefers-color-scheme: dark){:root{--bg:#0f1115;--fg:#e8e8ea;--mut:#8a8f98;--acc:#1db954;--acc-fg:#000;--line:#23262d;--card:#161920;--warn:#2a2410;--warn-fg:#e6c56a;color-scheme:dark}}
@@ -34,8 +34,10 @@
   .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:4px 0}
   .bar i{display:block;height:100%;background:var(--acc);transition:width .3s}
   .step.paused .bar i{background:var(--warn-fg)}
-  .viz{position:relative;height:260px;margin:-12px -12px 12px;border-radius:8px 8px 0 0;overflow:hidden;background:#141414}
+  .viz{position:relative;height:300px;margin:-12px -12px 12px;border-radius:8px 8px 0 0;overflow:hidden;background:#141414}
+  .vizHost{position:absolute;inset:0}
   .viz canvas{display:block;width:100%;height:100%}
+  .viz .lil-gui.root{position:absolute;top:8px;right:8px;--background-color:#1a1a1a;--text-color:#eee;--font-family:inherit;z-index:2}
   .vizCap{position:absolute;left:12px;bottom:10px;right:12px;color:#33fff1;font-size:11px;letter-spacing:.04em;text-shadow:0 0 8px rgba(51,255,241,.5);pointer-events:none}
   .grp{border-top:1px dashed var(--line);margin-top:10px}
   #aiLog,#dbgLog{max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:6px}
@@ -68,7 +70,7 @@
   </div>
   <div id="status"></div>
   <section id="pipe" hidden>
-    <div class="viz"><canvas id="loaderViz" aria-hidden="true"></canvas><div class="vizCap" id="vizCap"></div></div>
+    <div class="viz"><div id="loaderViz" class="vizHost"></div><div class="vizCap" id="vizCap"></div></div>
     <div class="row" style="justify-content:space-between;margin-bottom:6px">
       <b>Данные</b><span class="mut sm" id="pipeNet"></span><button id="pipeToggle" class="sm">свернуть</button>
     </div>
