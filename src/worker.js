@@ -6,29 +6,8 @@
 
 const JEV_MODEL = 'typesafe/jev';
 
-// Корзины для DJ. Меняешь здесь — меняется разметка (кэш на фронте сбросить кнопкой Re-classify).
+// Вопросы к Jev. Меняешь здесь — меняется разметка (кэш на фронте сбросить кнопкой Re-classify).
 export const QUESTIONS = {
-  genre: {
-    type: 'choice',
-    instructions: 'Which DJ genre bucket best fits this track?',
-    criteria: {
-      'deep house': 'Deep, soulful, warm house, 118-124 bpm',
-      'house': 'Classic, jackin, vocal or piano house',
-      'tech house': 'Groovy, percussive, minimal-leaning house, 124-128 bpm',
-      'melodic techno': 'Melodic techno, progressive, Afterlife/Anjunadeep style',
-      'techno': 'Driving, dark, hypnotic, industrial or peak-time techno',
-      'trance': 'Trance, psytrance, uplifting',
-      'disco': 'Disco, nu-disco, funk, edits',
-      'afro house': 'Afro house, organic house, Latin/tribal percussion',
-      'breaks / garage': 'Breakbeat, UK garage, 2-step, bass',
-      'drum and bass': 'Drum and bass, jungle, 170+ bpm',
-      'electronica': 'Downtempo, IDM, ambient, chill electronic',
-      'hip hop / r&b': 'Hip hop, rap, r&b, trap',
-      'pop / dance-pop': 'Mainstream pop, dance-pop, radio hits',
-      'rock / indie': 'Rock, indie, alternative, guitar music',
-      'other': 'Anything else: classical, jazz, folk, soundtrack, spoken',
-    },
-  },
   mood: {
     type: 'choice',
     instructions: 'What is the dominant mood of this track?',
@@ -76,8 +55,7 @@ async function classifyOne(env, t) {
     const a = r.answers || r.result?.answers || {};
     return {
       id: t.id,
-      genre: a.genre?.choice ?? null, gc: a.genre?.confidence ?? null,
-      mood: a.mood?.choice ?? null,
+      mood: a.mood?.choice ?? null, mc: a.mood?.confidence ?? null,
       energy: a.energy?.score ?? null, // 0..4
       slot: a.slot?.choice ?? null,
       vocal: a.vocal?.noul ?? null,

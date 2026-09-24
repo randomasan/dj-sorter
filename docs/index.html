@@ -47,7 +47,6 @@
     <summary>⚙️ Настройки</summary>
     <div class="row" style="margin-top:8px">
       <input id="clientId" placeholder="Spotify Client ID">
-      <input id="lastfmKey" placeholder="Last.fm API key (опционально, для стилей)">
       <button id="saveCfg">Save</button>
     </div>
     <div class="mut">Redirect URI для Spotify Dashboard: <b id="redir"></b></div>
@@ -79,14 +78,12 @@
     <section id="tab-lib">
       <div class="row">
         <span class="mut">Sort:</span>
-        <select id="sortBy">
-          <option value="genre">Жанр (Jev → Last.fm)</option>
+        <select id="sortBy">          <option value="bpm">BPM</option>
+
           <option value="key">Тональность (Camelot)</option>
-          <option value="bpm">BPM</option>
           <option value="energy">Энергия (Jev)</option>
           <option value="mood">Mood (Jev)</option>
           <option value="slot">Слот в сете (Jev)</option>
-          <option value="style">Стиль артиста</option>
           <option value="artist">Артист</option>
           <option value="added">Дата лайка</option>
         </select>
@@ -139,9 +136,9 @@ const status = t => { $('#status').textContent = t; };
 let BACKEND = false; // есть ли наш Worker (/api)
 $('#redir').textContent = REDIRECT;
 $('#clientId').value = LS.get('cfg.clientId','');
-$('#lastfmKey').value = LS.get('cfg.lastfmKey','');
+['cfg.lastfmKey','cache.genres','cache.genres.v2','cache.styles'].forEach(LS.del); // жанры/стили выпилены
 if(!LS.get('cfg.clientId')) $('#setup').open = true;
-$('#saveCfg').onclick = () => { LS.set('cfg.clientId',$('#clientId').value.trim()); LS.set('cfg.lastfmKey',$('#lastfmKey').value.trim()); status('Saved ✔'); };
+$('#saveCfg').onclick = () => { LS.set('cfg.clientId',$('#clientId').value.trim()); status('Saved ✔'); };
 
 async function detectBackend(){
   try{ const r = await fetch('api/health'); const j = await r.json(); BACKEND = !!j.ok; }
@@ -247,14 +244,14 @@ const chunks = (a,n) => Array.from({length:Math.ceil(a.length/n)},(_,i)=>a.slice
 const toRow = t => ({
   spotify_id:t.id, name:t.name, artists:t.artists, artist_ids:t.artistIds,
   bpm:t.bpm??null, musical_key:t.key??null, mode:t.mode??null, energy:t.energyAudio??null,
-  features_checked:!!t.featChecked, genres:t.genres??null, styles:t.stylesLf?t.styles:null, jev:t.jev??null,
+  features_checked:!!t.featChecked, jev:t.jev??null,
   updated_at:new Date().toISOString(),
 });
 // Берём из БД всё, что уже кто-то спарсил, и раскладываем по локальным кэшам → внешние API спрашиваем только про недостающее
 async function stepDbPull(tracks){
   if(!DB_ON()) return PIPE.finish('db','skip','БД не подключена');
   PIPE.start('db',{total:tracks.length, done:0});
-  const feat=LS.get('cache.feat',{}), gen=LS.get('cache.genres.v2',{}), sty=LS.get('cache.styles',{}), jev=LS.get('cache.jev',{});
+  const feat=LS.get('cache.feat',{}), jev=LS.get('cache.jev',{});
   const byId = Object.fromEntries(tracks.map(t=>[t.id,t]));
   let hits=0, seen=0;
   for(const ids of chunks(tracks.map(t=>t.id),100)){
@@ -262,17 +259,14 @@ async function stepDbPull(tracks){
     for(const r of rows){
       const t = byId[r.spotify_id]; if(!t) continue; hits++;
       if(r.features_checked) feat[r.spotify_id] = r.bpm!=null ? {bpm:r.bpm,key:r.musical_key,mode:r.mode,energyAudio:r.energy} : null;
-      if(r.genres!=null && !(t.artistIds[0] in gen)) gen[t.artistIds[0]] = r.genres;
-      if(r.styles!=null && !(t.artists[0] in sty)) sty[t.artists[0]] = r.styles;
       if(r.jev && !jev[r.spotify_id]) jev[r.spotify_id] = r.jev;
     }
     seen += ids.length;
     PIPE.set('db',{done:seen, note:`найдено в базе: ${hits}`});
   }
-  LS.set('cache.feat',feat); LS.set('cache.genres.v2',gen); LS.set('cache.styles',sty); LS.set('cache.jev',jev);
+  LS.set('cache.feat',feat); LS.set('cache.jev',jev);
   // сразу раскладываем по трекам, чтобы dbPush не затёр известное null-ами
-  tracks.forEach(t=>{ const a=t.artistIds[0], n=t.artists[0];
-    if(a in gen) t.genres=gen[a]; if(n in sty){ t.styles=sty[n]; t.stylesLf=true; } if(jev[t.id]) t.jev=jev[t.id]; });
+  tracks.forEach(t=>{ if(jev[t.id]) t.jev=jev[t.id]; });
   PIPE.finish('db','done',`найдено в базе: ${hits} из ${tracks.length}`);
 }
 // Запись — только через Edge Function `sync`: она проверяет Spotify-токен и пишет service-ключом.
@@ -306,7 +300,6 @@ const PIPE = {
     {key:'likes',  label:'Лайкнутые треки',          src:'Spotify · /me/tracks',            what:'название, артисты, дата лайка'},
     {key:'db',     label:'База треков',              src:'Supabase · tracks / users',       what:'общий кэш: берём уже спарсенное, сохраняем новое'},
     {key:'feat',   label:'BPM · тональность · energy', src:'ReccoBeats · /audio-features',  what:'tempo, key, mode, energy'},
-    {key:'styles', label:'Стили артистов',           src:'Last.fm · artist.getTopTags',     what:'теги (нужен ключ в ⚙️)'},
     {key:'jev',    label:'Разметка Jev',             src:'Jev · Cloudflare Worker',         what:'жанр-корзина, mood, энергия, слот'},
   ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
   get(k){ return this.steps.find(s=>s.key===k); },
@@ -375,25 +368,7 @@ async function stepFeatures(tracks){
   const found = tracks.filter(t=>t.bpm).length;
   PIPE.finish('feat', fails>=3?'err':'done', `найдено BPM: ${found}`);
 }
-async function stepStyles(tracks){
-  const key = LS.get('cfg.lastfmKey'); const cache = LS.get('cache.styles',{});
-  if(!key){ tracks.forEach(t=>{ const n=t.artists[0]; t.stylesLf = n in cache; t.styles = cache[n] || (t.genres||[]).slice(1); }); return PIPE.finish('styles','skip','нет ключа Last.fm'); }
-  const all=[...new Set(tracks.map(t=>t.artists[0]))]; const names=all.filter(a=>!(a in cache));
-  PIPE.start('styles',{total:all.length, done:all.length-names.length, cached:all.length-names.length});
-  for(const a of names){
-    try{ NET.req++; const j=await (await fetch(`https://ws.audioscrobbler.com/2.0/?method=artist.gettoptags&artist=${encodeURIComponent(a)}&api_key=${key}&format=json`)).json();
-      cache[a]=(j.toptags?.tag||[]).filter(x=>x.count>=10).slice(0,4).map(x=>x.name.toLowerCase()); }catch{ NET.errors++; }
-    PIPE.set('styles',{done:PIPE.get('styles').done+1});
-    if(PIPE.get('styles').done%25===0) LS.set('cache.styles',cache);
-    await sleep(210);
-  }
-  LS.set('cache.styles',cache);
-  tracks.forEach(t=>{ const n=t.artists[0]; t.stylesLf = n in cache; t.styles = cache[n] || (t.genres||[]).slice(1); });
-  PIPE.finish('styles');
-}
 const jevState = t => `Track: "${t.name}" by ${t.artists.join(', ')}.` +
-  (t.genres?.length ? ` Artist genres: ${t.genres.slice(0,5).join(', ')}.` : '') +
-  (t.styles?.length ? ` Tags: ${t.styles.slice(0,4).join(', ')}.` : '') +
   (t.bpm ? ` Tempo: ${t.bpm} bpm.` : '');
 async function classifyJev(tracks, force=false){
   if(!BACKEND){ tracks.forEach(t=>{ t.jev = LS.get('cache.jev',{})[t.id]||null; }); return PIPE.finish('jev','skip','нет бэкенда (GitHub Pages) — подключим позже'); }
@@ -406,7 +381,7 @@ async function classifyJev(tracks, force=false){
       NET.req++;
       const r = await fetch('api/classify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tracks:batch})});
       const j = await r.json();
-      for(const x of (j.results||[])) if(!x.error) cache[x.id]={genre:x.genre,gc:x.gc,mood:x.mood,energy:x.energy,slot:x.slot,vocal:x.vocal};
+      for(const x of (j.results||[])) if(!x.error) cache[x.id]={mood:x.mood,mc:x.mc,energy:x.energy,slot:x.slot,vocal:x.vocal};
     }catch(e){ NET.errors++; }
     PIPE.set('jev',{done:Math.min(tracks.length, tracks.length-todo.length+i+20)});
     LS.set('cache.jev',cache);
@@ -438,7 +413,6 @@ async function runPipeline({refetchLikes=false}={}){
     dbUpsertUser(tracks); // фоном
     await stepDbPull(tracks);
     await stepFeatures(tracks); LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
-    await stepStyles(tracks);   LS.set('lib',tracks);
     await classifyJev(tracks);  LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
     status(`Готово: ${tracks.length.toLocaleString()} треков`);
   }catch(e){
@@ -456,31 +430,27 @@ function demoLibrary(){
   return Array.from({length:60},(_,i)=>{ const [g,st,mood,e,slot]=G[Math.floor(rnd()*G.length)]; const [lo,hi]=B[g];
     return {id:'demo'+i,name:`Track ${String(i+1).padStart(2,'0')}`,artists:[`Artist ${String.fromCharCode(65+i%20)}`],artistIds:['a'+i%20],
       added:new Date(Date.now()-i*864e5*3).toISOString(),bpm:Math.round(lo+rnd()*(hi-lo)),key:Math.floor(rnd()*12),mode:rnd()>.4?0:1,
-      genres:[g],styles:st,jev:{genre:g,gc:+(0.4+rnd()*0.6).toFixed(2),mood,energy:Math.max(0,Math.min(4,+(e+rnd()-0.5).toFixed(2))),slot,vocal:+rnd().toFixed(2)}}; });
+      jev:{mc:+(0.4+rnd()*0.6).toFixed(2),mood,energy:Math.max(0,Math.min(4,+(e+rnd()-0.5).toFixed(2))),slot,vocal:+rnd().toFixed(2)}}; });
 }
 
 /* ================= helpers ================= */
 let LIB=[];
 const energyOf = t => t.jev?.energy ?? (t.energyAudio!=null ? t.energyAudio*4 : null); // 0..4
-const primaryGenre = t => t.jev?.genre || t.genres?.[0] || t.styles?.[0] || '— no genre';
-const primaryStyle = t => t.styles?.[0] || '— no style';
-const unsure = t => t.jev && t.jev.gc!=null && t.jev.gc<0.5 ? '?' : ' ';
+const unsure = t => t.jev && t.jev.mc!=null && t.jev.mc<0.5 ? '?' : ' ';
 function line(t){
   const c = camStr(camelot(t.key,t.mode));
   const e = energyOf(t);
-  const jev = t.jev ? `${unsure(t)}${t.jev.genre||''} · ${t.jev.mood||''} · E${e!=null?e.toFixed(1):'?'}${t.jev.vocal>0.6?' · vox':''}` : (t.genres||[]).slice(0,2).join(', ');
+  const jev = t.jev ? `${unsure(t)}${t.jev.mood||''} · E${e!=null?e.toFixed(1):'?'}${t.jev.vocal>0.6?' · vox':''}` : '';
   return `${String(t.bpm??'—').padStart(3)} bpm  ${c.padStart(3)} ${keyName(t).padEnd(3)}  ${t.artists.join(', ')} — ${t.name}   [${jev}]`;
 }
 const byBpm = (a,b)=>(a.bpm??999)-(b.bpm??999);
 const SLOT_ORDER = {warmup:0,build:1,peak:2,cooldown:3};
 const SORTS = {
-  genre:  [t=>primaryGenre(t), (a,b)=>primaryGenre(a).localeCompare(primaryGenre(b))||byBpm(a,b)],
   key:    [t=>camStr(camelot(t.key,t.mode)), (a,b)=>{const x=camelot(a.key,a.mode),y=camelot(b.key,b.mode); return (x?x.n:99)-(y?y.n:99)||(x?.l||'').localeCompare(y?.l||'')||byBpm(a,b);}],
   bpm:    [t=>t.bpm?`${Math.floor(t.bpm/10)*10}–${Math.floor(t.bpm/10)*10+9}`:'— no bpm', byBpm],
   energy: [t=>{const e=energyOf(t); return e==null?'— no energy':`E${Math.round(e)}`;}, (a,b)=>(energyOf(b)??-1)-(energyOf(a)??-1)],
   mood:   [t=>t.jev?.mood||'— no mood', (a,b)=>(a.jev?.mood||'~').localeCompare(b.jev?.mood||'~')||byBpm(a,b)],
   slot:   [t=>t.jev?.slot||'— no slot', (a,b)=>(SLOT_ORDER[a.jev?.slot]??9)-(SLOT_ORDER[b.jev?.slot]??9)||byBpm(a,b)],
-  style:  [t=>primaryStyle(t), (a,b)=>primaryStyle(a).localeCompare(primaryStyle(b))||byBpm(a,b)],
   artist: [t=>t.artists[0], (a,b)=>a.artists[0].localeCompare(b.artists[0])],
   added:  [t=>t.added?.slice(0,7)||'', (a,b)=>(b.added||'').localeCompare(a.added||'')],
 };
@@ -503,12 +473,10 @@ const targetEnergy = p => p < 0.7 ? 1.2 + (p/0.7)*2.6 : 3.8 - ((p-0.7)/0.3)*1.3;
 function transitionCost(a, b, tol, target){
   const bd = bpmDiff(a.bpm, b.bpm);
   const kd = keyDist(camelot(a.key,a.mode), camelot(b.key,b.mode));
-  const ga = new Set([a.jev?.genre, ...(a.genres||[]), ...(a.styles||[])].filter(Boolean));
-  const shared = [b.jev?.genre, ...(b.genres||[]), ...(b.styles||[])].filter(x=>x&&ga.has(x)).length;
   const moodSame = a.jev?.mood && a.jev.mood===b.jev?.mood ? 1 : 0;
   const eb = energyOf(b);
   const eCost = target!=null && eb!=null ? Math.abs(eb-target)*6 : (energyOf(a)!=null&&eb!=null ? Math.abs(energyOf(a)-eb)*3 : 2);
-  return (bd>tol ? 50 + bd : bd*1.5) + kd*6 - Math.min(shared,3)*4 - moodSame*2 + eCost;
+  return (bd>tol ? 50 + bd : bd*1.5) + kd*6 - moodSame*3 + eCost;
 }
 let LAST_SET = null;
 function buildSet(len, tol, curve){
@@ -549,7 +517,7 @@ function seedPrompt(){
   const last = s[s.length-1];
   const e = avg(s.map(energyOf).filter(x=>x!=null));
   return [
-    `Style: ${primaryGenre(last)}${last.jev?.mood?', '+last.jev.mood:''}`,
+    `Mood: ${last.jev?.mood||'?'}`,
     `Tempo: ${bpm?Math.round(bpm):'?'} bpm`,
     `Key: ${keyName(last)||'?'} (${camStr(camelot(last.key,last.mode))})`,
     `Energy: ${e!=null?e.toFixed(1):'?'} / 4`,

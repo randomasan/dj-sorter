@@ -10,8 +10,6 @@ create table if not exists tracks (
   mode             int,          -- 1 major, 0 minor
   energy           real,         -- 0..1 (ReccoBeats)
   features_checked boolean default false,  -- ReccoBeats уже спрашивали (даже если не нашёл)
-  genres           text[],       -- null = ещё не тянули, {} = жанров нет
-  styles           text[],
   jev              jsonb,
   updated_at       timestamptz default now()
 );
@@ -38,3 +36,7 @@ create policy public_read on tracks for select using (true);
 
 revoke all on tracks, users from anon, authenticated;
 grant select on tracks to anon, authenticated;
+
+-- Жанры/стили выпилены. Если таблица создана старой версией схемы — колонки можно удалить
+-- (ПОСЛЕ передеплоя функции sync новой версией):
+-- alter table tracks drop column if exists genres, drop column if exists styles;

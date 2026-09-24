@@ -32,8 +32,6 @@ function cleanTrack(t: any) {
     mode: num(t.mode, 0, 1),
     energy: num(t.energy, 0, 1),
     features_checked: t.features_checked === true,
-    genres: strArr(t.genres),
-    styles: strArr(t.styles),
     jev: t.jev && typeof t.jev === "object" && JSON.stringify(t.jev).length < 2000 ? t.jev : null,
     updated_at: new Date().toISOString(),
   };
