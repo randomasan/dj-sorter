@@ -543,9 +543,11 @@ async function aiDescribe(n=10){
   if(!SB_DESCRIBE_FN){ out.textContent='Функция describe ещё не подключена (SB_DESCRIBE_FN пустой).'; return; }
   const pick = LIB.filter(t=>!t.ai).sort((a,b)=>(!!b.isrc)-(!!a.isrc)||Math.random()-.5).slice(0,n);
   if(!pick.length){ out.textContent='Все треки уже описаны.'; return; }
-  $('#aiRun').disabled=true; const lines=[]; let ok=0, fail=0;
-  for(const part of chunks(pick,5)){
-    out.textContent = `Слушаю ${ok+fail+1}–${Math.min(ok+fail+part.length,pick.length)} из ${pick.length}… (~10 с на трек)\n\n`+lines.join('\n\n');
+  $('#aiRun').disabled=true; const lines=[]; let ok=0, fail=0, pauses=0;
+  const queue=[...pick];
+  while(queue.length){
+    const part=queue.splice(0,3);
+    out.textContent = `Слушаю… осталось ${queue.length+part.length} из ${pick.length} (~10–15 с на трек)\n\n`+lines.join('\n\n');
     try{
       NET.req++;
       const r = await fetch(`${SB_URL}/functions/v1/${SB_DESCRIBE_FN}`,{method:'POST',
@@ -553,8 +555,13 @@ async function aiDescribe(n=10){
         body:JSON.stringify({tracks:part.map(t=>({id:t.id,name:t.name,artists:t.artists,isrc:t.isrc}))})});
       const j = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(`${r.status}: ${j.error||''}`);
-      for(const x of j.results||[]){ const t=part.find(p=>p.id===x.id); if(!t) continue;
-        if(x.ai){ t.ai=x.ai; ok++; lines.push('✅ '+fmtAi(t)); } else { fail++; lines.push(`✖ ${t.artists[0]} — ${t.name}: ${x.error}`); } }
+      let wait=0;
+      for(const t of part){ const x=(j.results||[]).find(y=>y.id===t.id);
+        if(x?.ai){ t.ai=x.ai; ok++; lines.push('✅ '+fmtAi(t)); }
+        else if(!x || x.retry){ queue.push(t); wait=Math.max(wait, x?.retry||30); } // квота → в конец очереди
+        else { fail++; lines.push(`✖ ${t.artists[0]} — ${t.name}: ${x.error}`); } }
+      if(wait){ if(++pauses>5){ lines.push(`⏸ квота Gemini не отпускает — остановился, осталось ${queue.length}. Нажми ещё раз позже.`); fail+=queue.length; break; }
+        for(let s=wait;s>0;s--){ out.textContent=`⏸ лимит Gemini, жду ${s}s… (описано ${ok})\n\n`+lines.join('\n\n'); await sleep(1000); } }
     }catch(e){ fail+=part.length; lines.push('✖ батч упал: '+e.message); }
   }
   LS.set('lib',LIB); renderList();

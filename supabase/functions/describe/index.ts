@@ -15,7 +15,7 @@ const json = (d: unknown, status = 200) =>
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 // первая модель, которая ответит не 404, запоминается
-const MODELS = [Deno.env.get("GEMINI_MODEL"), "gemini-flash-latest", "gemini-3.8-flash", "gemini-3-flash", "gemini-2.5-flash"].filter(Boolean) as string[];
+const MODELS = [Deno.env.get("GEMINI_MODEL"), "gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"].filter(Boolean) as string[];
 let MODEL_OK: string | null = null;
 
 const ID = /^[A-Za-z0-9]{10,40}$/;
@@ -77,24 +77,38 @@ async function findPreview(t: any) {
   return { hit, log };
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+class RateLimit extends Error { constructor(public retry: number) { super(`gemini rate limit, retry in ${retry}s`); } }
+
+// Ретраи: 503 (перегрузка) → пауза и повтор, потом следующая модель; 429 (квота) → ждём retryDelay, если он короткий.
 async function gemini(b64: string, mime: string) {
-  const models = MODEL_OK ? [MODEL_OK] : MODELS;
+  const models = MODEL_OK ? [MODEL_OK, ...MODELS.filter((m) => m !== MODEL_OK)] : MODELS;
   let last = "";
   for (const m of models) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY },
-      body: JSON.stringify({
-        contents: [{ parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: PROMPT }] }],
-        generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0.2 },
-      }),
-    });
-    if (r.status === 404) { last = `model ${m} not found`; continue; }
-    const j = await r.json();
-    if (!r.ok) throw new Error(`gemini ${r.status}: ${j?.error?.message ?? ""}`.slice(0, 200));
-    MODEL_OK = m;
-    const text = j?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
-    return { model: m, data: JSON.parse(text) };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY },
+        body: JSON.stringify({
+          contents: [{ parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: PROMPT }] }],
+          generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0.2 },
+        }),
+      });
+      if (r.status === 404) { last = `model ${m} not found`; break; }
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 503 || r.status === 500) { last = `${m}: overloaded`; await sleep(2000 * (attempt + 1)); continue; }
+      if (r.status === 429) {
+        // deno-lint-ignore no-explicit-any
+        const d = (j?.error?.details ?? []).find((x: any) => x.retryDelay)?.retryDelay ?? "30s";
+        const sec = Math.ceil(parseFloat(d)) || 30;
+        if (sec <= 20 && attempt < 2) { await sleep(sec * 1000); continue; }
+        throw new RateLimit(sec);
+      }
+      if (!r.ok) throw new Error(`gemini ${r.status}: ${j?.error?.message ?? ""}`.slice(0, 200));
+      MODEL_OK = m;
+      const text = j?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+      return { model: m, data: JSON.parse(text) };
+    }
   }
   throw new Error(last || "no gemini model available");
 }
@@ -113,7 +127,7 @@ Deno.serve(async (req) => {
 
     const { tracks = [] } = await req.json();
     // deno-lint-ignore no-explicit-any
-    const batch = (tracks as any[]).filter((t) => t && ID.test(t.id ?? "")).slice(0, 5);
+    const batch = (tracks as any[]).filter((t) => t && ID.test(t.id ?? "")).slice(0, 3);
     const results = [];
     for (const t of batch) {
       try {
@@ -128,8 +142,10 @@ Deno.serve(async (req) => {
         const { error } = await db.from("tracks").update({ ai }).eq("spotify_id", t.id);
         results.push({ id: t.id, ai, saved: !error, db_error: error?.message });
       } catch (e) {
-        results.push({ id: t.id, error: String((e as Error)?.message ?? e) });
+        results.push({ id: t.id, error: String((e as Error)?.message ?? e), retry: e instanceof RateLimit ? e.retry : undefined });
+        if (e instanceof RateLimit) break; // остальные в этом батче не трогаем — квота
       }
+      await sleep(1500); // мягкий темп для бесплатного тарифа
     }
     return json({ results });
   } catch (e) {
