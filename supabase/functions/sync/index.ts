@@ -33,6 +33,8 @@ function cleanTrack(t: any) {
     energy: num(t.energy, 0, 1),
     features_checked: t.features_checked === true,
     jev: t.jev && typeof t.jev === "object" && JSON.stringify(t.jev).length < 2000 ? t.jev : null,
+    isrc: typeof t.isrc === "string" && /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(t.isrc) ? t.isrc : null,
+    names: t.names && typeof t.names === "object" && JSON.stringify(t.names).length < 4000 ? t.names : null,
     updated_at: new Date().toISOString(),
   };
 }

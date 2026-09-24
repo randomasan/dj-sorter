@@ -44,11 +44,14 @@ const SCHEMA = {
 const UA = { "user-agent": "Mozilla/5.0 (DJ Sorter; +https://randomasan.github.io/dj-sorter/)", accept: "application/json" };
 const clean = (s: string) => String(s ?? "").replace(/\s*[-–(\[].*$/, "").trim();
 
-// Ищем 30-сек превью: Deezer (ISRC → точный поиск → простой поиск) → iTunes. Возвращаем и диагностику.
+// Ищем 30-сек превью. Порядок: ISRC → известные алиасы → варианты имени артиста (оригинал/без диакритики/транслит)
+// × чистое название → iTunes. Всё, что нашли, возвращаем как алиас, чтобы следующий пользователь нашёл сразу.
 // deno-lint-ignore no-explicit-any
 async function findPreview(t: any) {
   const log: string[] = [];
-  const artist = t.artists?.[0] ?? "", title = clean(t.name);
+  const n = t.names ?? {};
+  const title = n.title_clean || clean(t.name);
+  const variants: string[] = [...new Set([...(n.artist_variants ?? []), t.artists?.[0] ?? ""].filter(Boolean))].slice(0, 3);
   // deno-lint-ignore no-explicit-any
   const dz = async (url: string, tag: string): Promise<any> => {
     try {
@@ -56,25 +59,44 @@ async function findPreview(t: any) {
       const j = await r.json();
       if (j?.error) { log.push(`${tag}: ${j.error.type ?? ""} ${j.error.message ?? ""}`.trim()); return null; }
       const hit = j?.data ? j.data[0] : j;
-      if (hit?.preview) return { src: "deezer", id: hit.id, preview: hit.preview, via: tag };
+      if (hit?.preview) return { src: "deezer", id: hit.id, preview: hit.preview, via: tag, artist: hit.artist?.name, title: hit.title };
       log.push(`${tag}: ${r.status} ${j?.data ? `${j.data.length} hits` : "no preview"}`);
     } catch (e) { log.push(`${tag}: ${(e as Error).message}`); }
     return null;
   };
+  const q = (a: string, ti: string, strict: boolean) =>
+    `https://api.deezer.com/search?limit=1&q=${encodeURIComponent(strict ? `artist:"${a}" track:"${ti}"` : `${a} ${ti}`)}`;
   let hit = null;
   if (t.isrc && ISRC.test(t.isrc)) hit = await dz(`https://api.deezer.com/track/isrc:${t.isrc}`, "dz-isrc");
-  hit ??= await dz(`https://api.deezer.com/search?limit=1&q=${encodeURIComponent(`artist:"${artist}" track:"${title}"`)}`, "dz-strict");
-  hit ??= await dz(`https://api.deezer.com/search?limit=1&q=${encodeURIComponent(`${artist} ${title}`)}`, "dz-loose");
-  if (!hit) {
+  // deno-lint-ignore no-explicit-any
+  for (const al of (n.aliases ?? []).filter((x: any) => x.src === "deezer").slice(0, 2)) hit ??= await dz(q(al.artist, al.title, true), "dz-alias");
+  for (const a of variants) {
+    if (hit) break;
+    hit ??= await dz(q(a, title, true), `dz-strict[${a}]`);
+    hit ??= await dz(q(a, title, false), `dz-loose[${a}]`);
+  }
+  for (const a of variants.slice(0, 2)) {
+    if (hit) break;
     try {
-      const r = await fetch(`https://itunes.apple.com/search?media=music&entity=song&limit=1&term=${encodeURIComponent(`${artist} ${title}`)}`, { headers: UA });
+      const r = await fetch(`https://itunes.apple.com/search?media=music&entity=song&limit=1&term=${encodeURIComponent(`${a} ${title}`)}`, { headers: UA });
       const j = await r.json();
       const it = j?.results?.[0];
-      if (it?.previewUrl) hit = { src: "itunes", id: it.trackId, preview: it.previewUrl, via: "itunes" };
-      else log.push(`itunes: ${r.status} ${j?.resultCount ?? "?"} hits`);
+      if (it?.previewUrl) hit = { src: "itunes", id: it.trackId, preview: it.previewUrl, via: `itunes[${a}]`, artist: it.artistName, title: it.trackName };
+      else log.push(`itunes[${a}]: ${r.status} ${j?.resultCount ?? "?"} hits`);
     } catch (e) { log.push(`itunes: ${(e as Error).message}`); }
   }
   return { hit, log };
+}
+
+// deno-lint-ignore no-explicit-any
+function withAlias(names: any, hit: any) {
+  const n = { ...(names ?? {}) };
+  const list = Array.isArray(n.aliases) ? [...n.aliases] : [];
+  if (hit?.artist && hit?.title && !list.some((x) => x.src === hit.src && x.artist === hit.artist && x.title === hit.title)) {
+    list.push({ src: hit.src, id: hit.id, artist: hit.artist, title: hit.title });
+  }
+  n.aliases = list.slice(-10);
+  return n;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -139,8 +161,13 @@ Deno.serve(async (req) => {
         const b64 = encodeBase64(new Uint8Array(await audio.arrayBuffer()));
         const g = await gemini(b64, mime.startsWith("audio/") ? mime : "audio/mpeg");
         const ai = { ...g.data, _model: g.model, _src: hit.src, _src_id: hit.id, _via: hit.via, _at: new Date().toISOString() };
-        const { error } = await db.from("tracks").update({ ai }).eq("spotify_id", t.id);
-        results.push({ id: t.id, ai, saved: !error, db_error: error?.message });
+        // алиасы мержим с тем, что уже лежит в базе (мог записать другой пользователь)
+        const { data: row } = await db.from("tracks").select("names").eq("spotify_id", t.id).maybeSingle();
+        const names = withAlias({ ...(t.names ?? {}), ...(row?.names ?? {}), aliases: [...(row?.names?.aliases ?? []), ...(t.names?.aliases ?? [])] }, hit);
+        const upd: Record<string, unknown> = { ai, names };
+        if (t.isrc && ISRC.test(t.isrc)) upd.isrc = t.isrc;
+        const { error } = await db.from("tracks").update(upd).eq("spotify_id", t.id);
+        results.push({ id: t.id, ai, names, saved: !error, db_error: error?.message });
       } catch (e) {
         results.push({ id: t.id, error: String((e as Error)?.message ?? e), retry: e instanceof RateLimit ? e.retry : undefined });
         if (e instanceof RateLimit) break; // остальные в этом батче не трогаем — квота

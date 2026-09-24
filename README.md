@@ -84,3 +84,10 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 3. Задеплой `supabase/functions/describe/index.ts` через редактор и выключи Verify JWT.
 4. Впиши слаг функции в `docs/index.html` → `SB_DESCRIBE_FN`.
 5. На сайте в панели «Данные» → группа **AI-describer** → ▶ 10 / 50 / все.
+
+## Нормализация (группа «Нормализация» в панели «Данные»)
+
+- **Фетчинг ID**: ISRC и длительность приходят в том же ответе Spotify `/me/tracks`, отдельных запросов не нужно. Если библиотека была закэширована старой версией без ISRC, лайки один раз перетягиваются (~26 запросов).
+- **Нормализация названий** работает локально. Для каждого трека считается `names`: `title_clean` (без feat/Remastered/Radio Edit/скобок), `version` (remix / edit / extended / live / remaster / mixed / …), `feat[]`, `artist_variants[]` (оригинал, без диакритики, транслит). Оригинал хранится в `orig_title` и `orig_artists`.
+- `names.aliases[]` показывает, как трек реально называется в Deezer и iTunes. Их записывает функция `describe`, когда находит превью, и следующий пользователь сразу ищет по алиасу.
+- В SQL: `isrc text`, `names jsonb` и индекс по ISRC (в конце `db/schema.sql`).

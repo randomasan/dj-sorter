@@ -43,3 +43,10 @@ grant select on tracks to anon, authenticated;
 
 -- AI-описание трека (Edge Function describe: превью Deezer → Gemini)
 alter table tracks add column if not exists ai jsonb;
+
+-- Нормализация: ISRC (код записи, одинаковый во всех сервисах) + имена
+--   names = { orig_title, orig_artists, title_clean, version, version_tag, feat[], artist_variants[],
+--             aliases[ {src, artist, title} ] }   -- aliases: как трек реально называется в Deezer/iTunes
+alter table tracks add column if not exists isrc text;
+alter table tracks add column if not exists names jsonb;
+create index if not exists tracks_isrc_idx on tracks (isrc);

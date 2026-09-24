@@ -68,6 +68,10 @@
       <b>Данные</b><span class="mut sm" id="pipeNet"></span><button id="pipeToggle" class="sm">свернуть</button>
     </div>
     <div id="pipeRows"></div>
+    <div id="normGrp" class="grp">
+      <div class="row" style="margin:14px 0 6px"><b>Нормализация</b></div>
+      <div id="normRows"></div>
+    </div>
     <div id="aiGrp" class="grp">
       <div class="row" style="justify-content:space-between;margin:14px 0 6px">
         <b>AI-describer</b>
@@ -238,6 +242,99 @@ async function sp(url, {maxWait=60000} = {}){
   throw new RateLimited(backoff);
 }
 
+/* ================= normalization (IDs + names) ================= */
+// Версии/мусор в названиях: вырезаем из title_clean, а тип версии кладём отдельно
+const VERSION_RX = [
+  [/\b(remix|rmx|rework|re-?edit|bootleg|flip|vip)\b/i, 'remix'],
+  [/\bextended\b/i, 'extended'],
+  [/\b(radio|single|club|original|short|album)\s+(edit|mix|version)\b|\bedit\b/i, 'edit'],
+  [/\blive\b|\bunplugged\b|\bsession\b/i, 'live'],
+  [/\bremaster(ed)?\b/i, 'remaster'],
+  [/\bmixed\b|\bdj mix\b/i, 'mixed'],
+  [/\bacoustic\b/i, 'acoustic'],
+  [/\binstrumental\b/i, 'instrumental'],
+  [/\bversion\b|\bmix\b/i, 'version'],
+];
+function parseTitle(raw){
+  let title = String(raw||''); const tags=[]; const feat=[];
+  // (feat. X) / [ft. X] / feat. X в конце
+  title = title.replace(/[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+([^\)\]]+)[\)\]]/gi,(_,a)=>{feat.push(...a.split(/,|&| and /i).map(s=>s.trim()).filter(Boolean)); return '';});
+  title = title.replace(/\s+(?:feat\.?|ft\.?|featuring)\s+(.+)$/i,(_,a)=>{feat.push(...a.split(/,|&| and /i).map(s=>s.trim()).filter(Boolean)); return '';});
+  // хвосты " - Radio Edit", " - Remastered 2011", " - Live from …"
+  title = title.replace(/\s+[-–—]\s+(.+)$/,(m,tail)=>{ if(VERSION_RX.some(([rx])=>rx.test(tail))||/\b(19|20)\d\d\b/.test(tail)){ tags.push(tail.trim()); return ''; } return m; });
+  // скобки с версиями "(Extended Mix)", "[Remastered]", "(aka ...)"
+  title = title.replace(/\s*[\(\[]([^\)\]]+)[\)\]]/g,(m,inner)=>{ if(VERSION_RX.some(([rx])=>rx.test(inner))||/^aka\b|\b(19|20)\d\d\b/i.test(inner)){ tags.push(inner.trim()); return ''; } return m; });
+  title = title.replace(/\s{2,}/g,' ').trim();
+  let version=null; for(const tag of tags){ for(const [rx,v] of VERSION_RX){ if(rx.test(tag)){ version=v; break; } } if(version) break; }
+  return {title_clean: title || String(raw||'').trim(), version, version_tag: tags.join('; ')||null, feat};
+}
+// Транслит: только как дополнительные варианты для поиска, не как «истина»
+const CYR2LAT = {а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'kh',ц:'ts',ч:'ch',ш:'sh',щ:'shch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya'};
+const LAT2CYR = [['shch','щ'],['iy','ий'],['yy','ый'],['sch','щ'],['yo','ё'],['yu','ю'],['ya','я'],['zh','ж'],['kh','х'],['ts','ц'],['ch','ч'],['sh','ш'],['a','а'],['b','б'],['c','к'],['d','д'],['e','е'],['f','ф'],['g','г'],['h','х'],['i','и'],['j','й'],['k','к'],['l','л'],['m','м'],['n','н'],['o','о'],['p','п'],['q','к'],['r','р'],['s','с'],['t','т'],['u','у'],['v','в'],['w','в'],['x','кс'],['y','ы'],['z','з']];
+const keepCase = (src,out) => src[0]===src[0].toUpperCase() ? out.charAt(0).toUpperCase()+out.slice(1) : out;
+function cyr2lat(s){ return s.replace(/[А-яЁё]+/g,w=>keepCase(w,[...w.toLowerCase()].map(c=>CYR2LAT[c]??c).join(''))); }
+function lat2cyr(s){ return s.replace(/[A-Za-z]+/g,w=>{ let x=w.toLowerCase(),o=''; while(x){ const p=LAT2CYR.find(([l])=>x.startsWith(l)); if(p){o+=p[1];x=x.slice(p[0].length);} else {o+=x[0];x=x.slice(1);} } return keepCase(w,o); }); }
+const deaccent = s => s.normalize('NFKD').replace(/[̀-ͯ]/g,'').replace(/ø/g,'o').replace(/Ø/g,'O').replace(/æ/g,'ae').replace(/ß/g,'ss');
+const hasCyr = s => /[А-яЁё]/.test(s), hasLat = s => /[A-Za-z]/.test(s);
+function artistVariants(a, title=''){
+  const v = new Set([a]);
+  const d = deaccent(a); v.add(d);
+  if(hasCyr(a)) v.add(cyr2lat(a));
+  // латинское имя + кириллическое название = почти наверняка транслит русскоязычного артиста (Auktyon — «Дорога»)
+  else if(hasLat(a) && hasCyr(title)) v.add(lat2cyr(d));
+  return [...v];
+}
+function normalizeTrack(t){
+  const p = parseTitle(t.name);
+  const prev = t.names || {};
+  t.names = {
+    orig_title: t.name, orig_artists: t.artists,
+    title_clean: p.title_clean, version: p.version, version_tag: p.version_tag, feat: p.feat,
+    artist_variants: artistVariants(t.artists[0]||'', t.name),
+    aliases: prev.aliases || [], // {src, artist, title} — как трек называется в других сервисах (пишет describe)
+    v: 1,
+  };
+  return t.names;
+}
+// Шаг 1: ID. ISRC приходит в том же ответе /me/tracks, отдельных запросов не нужно.
+async function stepIds(tracks){
+  const miss = tracks.filter(t=>!('isrc' in t));
+  NP.start('ids',{total:tracks.length, done:tracks.length-miss.length});
+  if(miss.length){
+    const byId = Object.fromEntries(tracks.map(t=>[t.id,t]));
+    let url='/me/tracks?limit=50', seen=0;
+    while(url){
+      const j = await sp(url);
+      for(const it of j.items){ const t=byId[it.track?.id]; if(!t) continue; t.isrc = it.track.external_ids?.isrc||null; t.dur = it.track.duration_ms||null; }
+      seen += j.items.length; NP.set('ids',{done:Math.min(tracks.length, tracks.length-miss.length+seen)});
+      url = j.next;
+    }
+    tracks.forEach(t=>{ if(!('isrc' in t)) t.isrc=null; });
+  }
+  const n = tracks.filter(t=>t.isrc).length;
+  NP.finish('ids', 'done', `${miss.length?`дотянуто для ${miss.length} · `:'пришли вместе с лайками · '}ISRC есть у ${n} из ${tracks.length}${n<tracks.length?` · без ISRC: ${tracks.length-n} (локальные файлы/подкасты/редкие релизы)`:''}`);
+}
+// Шаг 2: имена — локально, мгновенно
+function stepNames(tracks){
+  NP.start('names',{total:tracks.length, done:0});
+  let changed=0, withVer=0, withFeat=0, translit=0;
+  tracks.forEach((t,i)=>{ const n=normalizeTrack(t);
+    if(n.title_clean!==t.name) changed++; if(n.version) withVer++; if(n.feat.length) withFeat++; if(n.artist_variants.some(v=>hasCyr(v)!==hasCyr(t.artists[0]||''))) translit++; });
+  NP.set('names',{done:tracks.length});
+  NP.finish('names','done',`почищено названий: ${changed} · версии: ${withVer} · feat: ${withFeat} · транслит-варианты артиста: ${translit}`);
+}
+const NP = {
+  steps: [
+    {key:'ids',   label:'Фетчинг ID',          src:'Spotify · external_ids.isrc',   what:'ISRC — код записи, одинаковый во всех сервисах'},
+    {key:'names', label:'Нормализация названий', src:'локально',                    what:'чистое название, версия, feat, варианты имени артиста; оригинал сохраняется'},
+  ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
+  get(k){ return this.steps.find(s=>s.key===k); },
+  set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
+  start(k,patch={}){ this.set(k,{status:'run',t0:Date.now(),note:'',...patch}); },
+  finish(k,status='done',note=''){ this.set(k,{status,t1:Date.now(),note}); },
+  render(){ $('#normRows').innerHTML = renderSteps(this.steps); },
+};
+
 /* ================= DB (Supabase) ================= */
 // Публичные значения (Project URL + publishable/anon key). Пусто → работаем без БД, только localStorage.
 const SB_URL = 'https://vnmdnmvogwxqloaxbenk.supabase.co';
@@ -258,6 +355,7 @@ const toRow = t => ({
   spotify_id:t.id, name:t.name, artists:t.artists, artist_ids:t.artistIds,
   bpm:t.bpm??null, musical_key:t.key??null, mode:t.mode??null, energy:t.energyAudio??null,
   features_checked:!!t.featChecked, jev:t.jev??null,
+  isrc:t.isrc??null, names:t.names??null,
   updated_at:new Date().toISOString(),
 });
 // Берём из БД всё, что уже кто-то спарсил, и раскладываем по локальным кэшам → внешние API спрашиваем только про недостающее
@@ -274,6 +372,8 @@ async function stepDbPull(tracks){
       if(r.features_checked) feat[r.spotify_id] = r.bpm!=null ? {bpm:r.bpm,key:r.musical_key,mode:r.mode,energyAudio:r.energy} : null;
       if(r.jev && !jev[r.spotify_id]) jev[r.spotify_id] = r.jev;
       if(r.ai) t.ai = r.ai;
+      if(r.isrc && !t.isrc) t.isrc = r.isrc;
+      if(r.names?.aliases?.length) t.names = {...(t.names||{}), aliases: r.names.aliases};
     }
     seen += ids.length;
     PIPE.set('db',{done:seen, note:`найдено в базе: ${hits}`});
@@ -350,7 +450,7 @@ async function stepLikes(total){
   while(url){
     const j = await sp(url);
     for(const it of j.items){ const t=it.track; if(!t||!t.id) continue;
-      out.push({id:t.id,name:t.name,artists:t.artists.map(a=>a.name),artistIds:t.artists.map(a=>a.id),added:it.added_at,isrc:t.external_ids?.isrc||null}); }
+      out.push({id:t.id,name:t.name,artists:t.artists.map(a=>a.name),artistIds:t.artists.map(a=>a.id),added:it.added_at,isrc:t.external_ids?.isrc||null,dur:t.duration_ms||null}); }
     PIPE.set('likes',{done:out.length});
     url = j.next;
   }
@@ -412,6 +512,7 @@ async function runPipeline({refetchLikes=false}={}){
   if(PIPE_RUNNING) return; PIPE_RUNNING = true;
   $('#reload').disabled = true;
   PIPE.steps.forEach(s=>Object.assign(s,{status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0}));
+  NP.steps.forEach(s=>Object.assign(s,{status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})); NP.render();
   try{
     let tracks = LS.get('lib');
     if(!tracks || refetchLikes){
@@ -429,6 +530,7 @@ async function runPipeline({refetchLikes=false}={}){
     showApp(tracks);
     dbUpsertUser(tracks); // фоном
     await stepDbPull(tracks);
+    await stepIds(tracks); stepNames(tracks); LS.set('lib',tracks); await dbPush(tracks);
     await stepFeatures(tracks); LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
     await classifyJev(tracks);  LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
     status(`Готово: ${tracks.length.toLocaleString()} треков`);
@@ -588,13 +690,13 @@ async function aiDescribe(n){
       NET.req++;
       const r = await fetch(`${SB_URL}/functions/v1/${SB_DESCRIBE_FN}`,{method:'POST',
         headers:{apikey:SB_KEY,'content-type':'application/json','x-spotify-token':await accessToken()},
-        body:JSON.stringify({tracks:part.map(t=>({id:t.id,name:t.name,artists:t.artists,isrc:t.isrc}))})});
+        body:JSON.stringify({tracks:part.map(t=>({id:t.id,name:t.name,artists:t.artists,isrc:t.isrc,names:t.names}))})});
       const j = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(`${r.status}: ${j.error||''}`);
       let wait=0;
       for(const t of part){
         const x=(j.results||[]).find(y=>y.id===t.id), who=`${t.artists[0]} — ${t.name}`;
-        if(x?.ai){ t.ai=x.ai; c.tried++; c.found++; c.ok++; if(x.saved) c.saved++; aiLogPush('✅ '+fmtAi(t)); }
+        if(x?.ai){ t.ai=x.ai; if(x.names) t.names=x.names; c.tried++; c.found++; c.ok++; if(x.saved) c.saved++; aiLogPush('✅ '+fmtAi(t)); }
         else if(!x || x.retry){ queue.push(t); wait=Math.max(wait, x?.retry||30); }
         else if(/^(no preview|preview )/.test(x.error||'')){ c.tried++; c.miss++; aiLogPush(`🔇 ${who}: ${x.error}`); }
         else { c.tried++; c.found++; c.gfail++; aiLogPush(`✖ ${who}: ${x.error}`); }
@@ -634,7 +736,7 @@ $('#aiRun10').onclick = () => aiDescribe(10);
 $('#aiRun50').onclick = () => aiDescribe(50);
 $('#aiRunAll').onclick = () => aiDescribe(1e9);
 $('#aiStop').onclick = () => { AI_STOP=true; $('#aiStop').disabled=true; };
-$('#pipeToggle').onclick = () => { const h=!$('#pipeRows').hidden; $('#pipeRows').hidden=h; $('#aiGrp').hidden=h; $('#pipeToggle').textContent=h?'развернуть':'свернуть'; };
+$('#pipeToggle').onclick = () => { const h=!$('#pipeRows').hidden; $('#pipeRows').hidden=h; $('#aiGrp').hidden=h; $('#normGrp').hidden=h; $('#pipeToggle').textContent=h?'развернуть':'свернуть'; };
 setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
 
 (async()=>{
