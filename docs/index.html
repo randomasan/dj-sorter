@@ -714,13 +714,13 @@ async function aiDescribe(n){
       for(const t of part){
         const x=(j.results||[]).find(y=>y.id===t.id), who=`${t.artists[0]} — ${t.name}`;
         if(x?.ai){ t.ai=x.ai; if(x.names) t.names=x.names; c.tried++; c.found++; c.ok++; if(x.saved) c.saved++; aiLogPush('✅ '+fmtAi(t)); }
-        else if(!x || x.retry){ queue.push(t); wait=Math.max(wait, x?.retry||30); }
+        else if(!x || x.retry){ queue.push(t); wait=Math.max(wait, x?.retry||30); aiLogPush(`⏸ ${who}: ${x?.error||'нет ответа по треку'} → в конец очереди`); }
         else if(/^(no preview|preview )/.test(x.error||'')){ c.tried++; c.miss++; aiLogPush(`🔇 ${who}: ${x.error}`); }
         else { c.tried++; c.found++; c.gfail++; aiLogPush(`✖ ${who}: ${x.error}`); }
       }
       upd();
       if(wait){
-        if(++c.pauses>5){ upd(`квота не отпускает, осталось ${queue.length}`); break; }
+        if(++c.pauses>5){ upd(`квота не отпускает, осталось ${queue.length}`); aiLogPush(`⛔ стоп: 5 пауз подряд из-за квоты Gemini, не дошли ${queue.length}. Бесплатный лимит исчерпан — подожди или включи биллинг.`); break; }
         for(let s=wait;s>0 && !AI_STOP;s--){ upd(`⏸ лимит Gemini, жду ${s}s`); await sleep(1000); }
         upd();
       }
