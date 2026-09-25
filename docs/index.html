@@ -199,11 +199,12 @@ addEventListener('scroll', ()=>$('#top').classList.toggle('is-solid', scrollY > 
 </script>
 <script type="module">
   import { mountLoader } from './loader.js';
-  // загрузка страницы: шар вырастает из точки (2 с) → лого + заголовок → кнопка
+  // загрузка страницы: яркая точка → из неё строится сетка → шум → мысли; лого + заголовок на 2.8 с → кнопка
+  // (прежний вариант «рост из точки» — intro:2 и reveal на 1.8 с, тег intro-grow-v1)
   const stage = (sel) => document.querySelectorAll(sel).forEach(el => el.classList.add('is-in'));
   const reveal = () => { stage('#top, #heroTitle'); setTimeout(() => stage('#feed'), 450); };
-  try { window.ORB = mountLoader(document.getElementById('orb'), { intro:2, gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } }); } catch(e){ console.warn('orb', e); }
-  setTimeout(reveal, 1800);   // заголовок и лого — к концу роста шара
+  try { window.ORB = mountLoader(document.getElementById('orb'), { intro:'build', gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } }); } catch(e){ console.warn('orb', e); }
+  setTimeout(reveal, 2800);   // заголовок и лого — когда сетка построена и пошёл шум
 </script>
 </body>
 </html>

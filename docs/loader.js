@@ -11,7 +11,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 // axes:true — оси XYZ внутри шара (для отладки).
 // thought:true — «мысль в мозгу»: участок сетки внутри шара с более частыми сигналами своего цвета, иногда вспыхивает.
 export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false, thought = false, intro = 0 } = {}) {
-  // intro: N секунд — шар «вырастает из точки» с доворотом (0 — без интро)
+  // intro: число N — вариант 1 «рост из точки» с доворотом за N с (тег intro-grow-v1);
+  //        'build' — вариант 2: яркая точка → из неё строится сетка → запускается шум → потом мысли
   const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
 
   // --- 1. Scene Setup ---
@@ -245,15 +246,21 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     varying float vDistance;
     varying float vHot;
     varying float vFace;
+    varying float vR;           // «время рождения» точки ребра при интро-постройке: расстояние от центра + неровность фронта
     void main() {
       vDistance = lineDistance;
       vHot = aHot;
       vFace = aFace;
+      vR = length(position) + (fract(sin(dot(position, vec3(12.9898, 78.233, 37.719))) * 43758.5453) - 0.5) * 2.2;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`;
   const fragmentShader = `
     uniform vec3 colorLine;
     uniform vec3 colorDot;
+    uniform float uReveal;      // интро: радиус фронта постройки сетки (≥14 — сетка целиком)
+    uniform float uNoiseOn;     // интро: включение шума 0..1
+    uniform float uThoughtOn;   // интро: включение мыслей 0..1
+    varying float vR;
     uniform vec3 uBgRaw;
     uniform float uTime;
     uniform float uSpeed;
@@ -297,10 +304,15 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       // Уходя к краю, мысль «умирает», заходя в центр — «рождается»
       float dens = smoothstep(h5 - 0.12, h5 + 0.12, vHot);
       sT *= life * dens;
+      // интро: сетка строится от центра фронтом uReveal (яркая зелёная кромка), потом включаются шум и мысли
+      float rev = 1.0 - smoothstep(uReveal - 1.0, uReveal, vR);
+      float front = rev * smoothstep(uReveal - 2.2, uReveal - 0.3, vR) * step(uReveal, 13.9);
+      sN *= uNoiseOn * rev; sT *= uThoughtOn * rev;
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно своего цвета
       vec3 finalColor = mix(colorLine, max(colorDot - uBgRaw, 0.0), sN);
       finalColor = mix(finalColor, max(colorThought - uBgRaw, 0.0) * (1.0 + uPulse * 2.2), sT);   // мысль поверх шума, иногда ярче
-      float finalAlpha = max(0.2, max(sN, sT));
+      finalColor = mix(finalColor, max(colorDot - uBgRaw, 0.0), front);
+      float finalAlpha = max(0.2 * rev, max(max(sN, sT), front * 0.9));
       gl_FragColor = vec4(finalColor, finalAlpha);
       if (uUseFog) {
         float depth = gl_FragCoord.z / gl_FragCoord.w;
@@ -322,6 +334,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       uPulse: { value: 0 },
       uHotTime: { value: 0 },
       uThoughtRep: { value: params.thoughtRep },
+      uReveal: { value: 100 }, uNoiseOn: { value: 1 }, uThoughtOn: { value: 1 },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -464,7 +477,25 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   const BRAKE_SPEED = 0.35, BRAKE_MIN = 0.04;   // порог скорости курсора (px/мс) и остаточная скорость мыслей
   let brake = 1;
-  let introLeft = intro > 0 && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let introLeft = typeof intro === 'number' && intro > 0 && !reduced;
+  // вариант 2 «постройка»: тайминг (с) — точка 0–0.4, сетка 0.4–2.2, шум 2.2–2.8, мысли 2.8–3.6
+  const BUILD = { dot: 0.4, grow: 1.8, noise: 0.6, thought: 0.8 };
+  let buildLeft = intro === 'build' && !reduced;
+  let seed = null;
+  if (buildLeft) {
+    material.uniforms.uReveal.value = 0; material.uniforms.uNoiseOn.value = 0; material.uniforms.uThoughtOn.value = 0;
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+    seed = new THREE.Points(g, new THREE.ShaderMaterial({
+      uniforms: { uA: { value: 0 }, uS: { value: 0 }, uC: { value: new THREE.Color().setStyle(params.dotColor, THREE.LinearSRGBColorSpace) } },
+      vertexShader: 'uniform float uS; void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uS; }',
+      fragmentShader: 'uniform float uA; uniform vec3 uC; void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; float a = smoothstep(1.0, 0.0, d); a *= a; gl_FragColor = vec4(mix(uC, vec3(1.0), smoothstep(0.35, 0.0, d) * 0.6) * uA, a * uA); }',
+      transparent: true, depthTest: false, blending: THREE.AdditiveBlending,
+    }));
+    seed.renderOrder = 20; rig.add(seed);
+  }
+  const ease = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
   const clock = new THREE.Clock();
   let t = 0, boost = 1, boostTarget = 1, running = true;
   function animate() {
@@ -485,6 +516,17 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       material.uniforms.uPulse.value = pulseLevel(clock.elapsedTime);
     }
     if (follow) { followStep(dt); controls.update(); }
+    if (buildLeft) {
+      const T = clock.elapsedTime, u = material.uniforms, px = Math.min(window.devicePixelRatio, 2);
+      const tGrow = (T - BUILD.dot) / BUILD.grow, tN = (T - BUILD.dot - BUILD.grow) / BUILD.noise, tT = (T - BUILD.dot - BUILD.grow - BUILD.noise) / BUILD.thought;
+      // точка: вспыхивает, держится, пока строится сетка, и гаснет, когда пошёл шум
+      seed.material.uniforms.uA.value = clamp01(T / BUILD.dot) * (1 - clamp01(tN));
+      seed.material.uniforms.uS.value = (22 + 6 * Math.sin(T * 9)) * px * (1 - 0.4 * clamp01(tGrow));
+      u.uReveal.value = ease(clamp01(tGrow)) * 14;
+      u.uNoiseOn.value = clamp01(tN);
+      u.uThoughtOn.value = clamp01(tT);
+      if (tT >= 1) { buildLeft = false; u.uReveal.value = 100; rig.remove(seed); seed.geometry.dispose(); seed.material.dispose(); }
+    }
     if (introLeft) {
       // появление: масштаб 0 → 1 (easeOutCubic) и доворот на 1.25 оборота вокруг Y, который гасится к концу
       const p = Math.min(1, clock.elapsedTime / intro), e = 1 - Math.pow(1 - p, 3);
