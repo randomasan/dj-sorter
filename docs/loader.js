@@ -32,7 +32,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     speed: 0.1,
     dotLength: 0.01,
     dotDensity: 1.809,
-    thoughtColor: '#4cb3ff',   // цвет сигналов «мысли» (--info из кита)
+    thoughtColor: '#4cb3ff',   // цвет «мыслей» (--info из кита)
+    thoughtLines: false,
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -174,7 +175,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
         currentPos = findStartPoint();
       }
     }
-    if (thought) {
+    if (thought && params.thoughtLines) {   // старая «мысль» линиями — выключена, теперь облако точек (см. 7)
       const inHot = (p) => isPointInside(p, shapeType) && Math.random() < 0.15 + 0.85 * hotW(p);  // ближе к центру — гуще
       const startHot = () => {
         const p = new THREE.Vector3();
@@ -311,6 +312,80 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     rig.add(ax);
   }
 
+  // --- 7. «Мысли» — облако точек, живущих на узлах исходной сетки ---
+  // Состояние каждой точки i:
+  //   walk_i  — позиция на сетке: едет по ребру from→to, в узле выбирает соседа (с тягой к центру)
+  //   cone_i  — своё место в конусе (u — доля пути к вершине, θ, ρ — положение в сечении)
+  //   a_i     — насколько точка «в конусе»: da/dt = k_i·(clamp((G − s_i)/(1 − s_i)) − a_i)
+  //   pos_i   = lerp(walk_i, cone_i, smoothstep(a_i))
+  // G — общее «внимание»: растёт, пока курсор движется быстрее порога; иначе медленно гаснет.
+  // s_i — порог включения точки (разные → конус «собирается» постепенно), k_i — её скорость.
+  // Точка 0 — вершина конуса: одна яркая точка, смотрит на курсор.
+  const T_N = 420, CONE = { back: 3, len: 14, rBase: 5.2 };  // база в −3·dir, вершина в +11·dir (внутри r=12)
+  let tCloud = null;
+  const tMat = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) }, uPx: { value: renderer.getPixelRatio() } },
+    vertexShader: `
+      attribute float aSize; attribute float aBright;
+      uniform float uPx; varying float vB;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = aSize * uPx * (30.0 / -mv.z);
+        vB = aBright;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; varying float vB;
+      void main() {
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        float core = smoothstep(1.0, 0.0, d);
+        float hot = smoothstep(0.35, 0.0, d);
+        vec3 c = uColor * core + vec3(1.0) * hot * clamp(vB - 1.0, 0.0, 1.0) * 0.8;   // очень яркие — с белым ядром
+        gl_FragColor = vec4(c * vB, core * clamp(vB, 0.0, 1.0));
+      }`,
+    transparent: true, depthTest: false, blending: THREE.AdditiveBlending,
+  });
+  function buildCloud(geo) {
+    const Rr = (x, y) => x + Math.random() * (y - x);
+    if (tCloud) { rig.remove(tCloud.points); tCloud.points.geometry.dispose(); }
+    const P = geo.attributes.position.array, H = geo.attributes.aHot.array;
+    const nodes = new Map(), K = (x, y, z) => x + ',' + y + ',' + z;
+    const node = (x, y, z) => { const k = K(x, y, z); let n = nodes.get(k); if (!n) { n = { p: new THREE.Vector3(x, y, z), nb: [], w: 0 }; nodes.set(k, n); } return n; };
+    for (let i = 0; i < P.length; i += 6) {
+      if (H[i / 3] > 0) continue;
+      const a = node(P[i], P[i+1], P[i+2]), b = node(P[i+3], P[i+4], P[i+5]);
+      if (!a.nb.includes(b)) { a.nb.push(b); b.nb.push(a); }
+    }
+    const list = [...nodes.values()].filter(n => n.nb.length);
+    list.forEach(n => { n.w = 0.12 + 0.88 * hotW(n.p); });           // в покое мысли тянутся к центру, но размыто
+    const pickNode = () => { for (let k = 0; k < 400; k++) { const n = list[(Math.random() * list.length) | 0]; if (Math.random() < n.w) return n; } return list[0]; };
+    const pickNext = (n, prev) => {
+      const c = n.nb.length > 1 ? n.nb.filter(m => m !== prev) : n.nb;
+      let sum = 0; for (const m of c) sum += m.w; let r = Math.random() * sum;
+      for (const m of c) { r -= m.w; if (r <= 0) return m; } return c[0];
+    };
+    const pts = [];
+    for (let i = 0; i < T_N; i++) {
+      const from = pickNode(), to = pickNext(from, null);
+      pts.push({
+        from, to, prev: null, f: Math.random(), v: Rr(1.2, 3.2),              // скорость по сетке, ед/с
+        u: i === 0 ? 1 : 1 - Math.cbrt(Math.random()), th: Math.random() * Math.PI * 2, rho: Math.sqrt(Math.random()),
+        flow: Rr(0.06, 0.16),                                                   // течение к вершине внутри конуса
+        s: i === 0 ? 0.55 : Math.pow(Math.random(), 1.4) * 0.7, k: Rr(2.5, 7), a: 0,
+        tw: Math.random() * 6.28, tws: Rr(1.5, 4),
+        pos: new THREE.Vector3(),
+      });
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(T_N * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(T_N), 1).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aBright', new THREE.BufferAttribute(new Float32Array(T_N), 1).setUsage(THREE.DynamicDrawUsage));
+    const points = new THREE.Points(g, tMat); points.frustumCulled = false; points.renderOrder = 5;
+    rig.add(points);
+    tCloud = { pts, points, pickNext };
+  }
+  if (thought) buildCloud(mesh.geometry);
+
   // --- 5. GUI (свёрнута, в углу визуала) ---
   const gui = new GUI({ title: 'System Core', container });
   gui.domElement.classList.add('viz-gui');
@@ -318,6 +393,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     rig.remove(mesh); mesh.geometry.dispose();
     mesh = new THREE.LineSegments(createShapeGeometry(params.shape, params.onlyExternal), material);
     rig.add(mesh);
+    if (thought) buildCloud(mesh.geometry);
   };
   const fGeo = gui.addFolder('Geometry');
   fGeo.add(params, 'shape', ['Cube', 'Sphere', 'Cut', 'Pac', 'Pyramid', 'Hexagon', 'Torus']).name('Form Factor').onChange(rebuildGeo);
@@ -414,6 +490,62 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     return Math.min(1.2, calm + v);
   };
 
+  // --- 7a. Динамика облака ---
+  const CONE_SPEED = 1.1;          // px/мс: быстрее — мысли собираются в конус к курсору
+  let G = 0;
+  const dirW = new THREE.Vector3(0, 0, 1), dirL = new THREE.Vector3(0, 0, 1), tmpQ = new THREE.Quaternion();
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), tv = new THREE.Vector3(), tw = new THREE.Vector3();
+  const perpA = new THREE.Vector3(), perpB = new THREE.Vector3(), cp = new THREE.Vector3(), wp = new THREE.Vector3();
+  function aimDir() {
+    // направление из центра шара на курсор: точка луча, ближайшая к центру, + немного «к зрителю»
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set(((lastX - r.left) / r.width) * 2 - 1, -((lastY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const o = ray.ray.origin, d = ray.ray.direction;
+    tv.copy(o).addScaledVector(d, -o.dot(d));                         // ближайшая к (0,0,0) точка луча
+    tw.copy(camera.position).normalize().multiplyScalar(0.55);
+    tv.multiplyScalar(1 / 12).add(tw);
+    if (tv.lengthSq() < 1e-6) tv.set(0, 0, 1);
+    return tv.normalize();
+  }
+  function stepCloud(dt, now, pulse) {
+    if (!tCloud) return;
+    const moving = performance.now() - lastMove < IDLE && !dragging;
+    const Gt = follow && moving && speed > CONE_SPEED ? 1 : 0;
+    G += (Gt - G) * (1 - Math.exp(-dt * (Gt > G ? 2.2 : 0.8)));      // собирается ~1 с, рассыпается ~3 с
+    if (follow && moving) dirW.lerp(aimDir(), 1 - Math.exp(-dt * 6)).normalize();
+    rig.getWorldQuaternion(tmpQ).invert();
+    dirL.copy(dirW).applyQuaternion(tmpQ);
+    // базис сечения конуса
+    perpA.set(0, 1, 0); if (Math.abs(dirL.y) > 0.9) perpA.set(1, 0, 0);
+    perpA.cross(dirL).normalize(); perpB.copy(dirL).cross(perpA).normalize();
+    const g = tCloud.points.geometry, P = g.attributes.position.array, S = g.attributes.aSize.array, B = g.attributes.aBright.array;
+    const pts = tCloud.pts;
+    for (let i = 0; i < pts.length; i++) {
+      const q = pts[i];
+      // по сетке
+      q.f += q.v * dt / 2;
+      while (q.f >= 1) { q.f -= 1; const nx = tCloud.pickNext(q.to, q.from); q.prev = q.from; q.from = q.to; q.to = nx; }
+      wp.lerpVectors(q.from.p, q.to.p, q.f);
+      // в конус
+      const at = Math.min(1, Math.max(0, (G - q.s) / (1 - q.s)));
+      q.a += (at - q.a) * (1 - Math.exp(-dt * q.k));
+      const e = q.a * q.a * (3 - 2 * q.a);
+      if (i > 0 && G > 0.05) { q.u += q.flow * dt * G; if (q.u > 1) q.u -= 1; }   // мысли стекают к вершине
+      const along = -CONE.back + q.u * CONE.len, rad = CONE.rBase * (1 - q.u) * q.rho;
+      cp.copy(dirL).multiplyScalar(along)
+        .addScaledVector(perpA, Math.cos(q.th) * rad).addScaledVector(perpB, Math.sin(q.th) * rad);
+      q.pos.lerpVectors(wp, cp, e);
+      P[i*3] = q.pos.x; P[i*3+1] = q.pos.y; P[i*3+2] = q.pos.z;
+      // яркость: покой — тихо мерцают и дышат вместе с «мыслью»; в конусе ярче, у вершины ярче всего
+      const twk = 0.55 + 0.45 * Math.sin(now * q.tws + q.tw);
+      const fade = i === 0 ? 1 : Math.min(1, q.u * 8, (1 - q.u) * 12 + 0.3 * (1 - e));
+      if (i === 0) { S[i] = 3 + 13 * e; B[i] = (0.5 + 0.6 * pulse) * (1 - e) + e * (1.9 + 0.2 * Math.sin(now * 9)); }
+      else { S[i] = 4.2 + 0.3 * e; B[i] = (0.6 + 0.35 * twk) * (0.75 + 0.9 * pulse) * (1 - e) + e * (0.9 + 0.3 * twk) * (0.4 + 0.6 * fade); }
+    }
+    g.attributes.position.needsUpdate = true; g.attributes.aSize.needsUpdate = true; g.attributes.aBright.needsUpdate = true;
+  }
+
   const clock = new THREE.Clock();
   let t = 0, boost = 1, boostTarget = 1, running = true;
   function animate() {
@@ -425,6 +557,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     material.uniforms.uTime.value = t;
     if (thought) {
       material.uniforms.uPulse.value = pulseLevel(clock.elapsedTime);
+      stepCloud(dt, clock.elapsedTime, material.uniforms.uPulse.value);
     }
     if (follow) { followStep(dt); controls.update(); }
     else { controls.autoRotateSpeed = 0.5 * boost; controls.update(); }
@@ -446,7 +579,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   return {
     setActive(on) { boostTarget = on ? 3.5 : 1; },
-    pulse(kind = 'thought') { spawn(kind); },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
+    pulse(kind = 'thought') { spawn(kind); },
+    _cone() { return G; },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
     params,
   };
 }
