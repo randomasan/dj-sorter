@@ -247,10 +247,15 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   // --- 6a. Слежение за курсором ---
   // target — наклон к курсору, пока мышь двигается; через IDLE мс без движения target = 0.
   // Изинг: экспоненциальное сглаживание, скорость зависит от скорости курсора (быстрее мышь → меньше изинга).
-  const MAX_TILT = 0.38, IDLE = 140, RATE_MIN = 1.6, RATE_MAX = 12, RATE_RETURN = 2.4;
+  const MAX_TILT = 0.38, IDLE = 180, THRESH = 6,  // THRESH — мёртвая зона: курсор должен сдвинуться ≥6px, чтобы шар отреагировал
+        RATE_MIN = 1.6, RATE_MAX = 12, RATE_RETURN = 2.4;
   const aim = { x: 0, y: 0 }, cur = { x: 0, y: 0 };
   let lastMove = -1e9, lastX = 0, lastY = 0, lastT = 0, speed = 0;
+  let ancX = null, ancY = null;
   if (follow) addEventListener('pointermove', (e) => {
+    if (ancX === null) { ancX = e.clientX; ancY = e.clientY; lastX = ancX; lastY = ancY; lastT = performance.now(); return; }
+    if (Math.hypot(e.clientX - ancX, e.clientY - ancY) < THRESH) return;   // дрожание руки не считаем
+    ancX = e.clientX; ancY = e.clientY;
     const r = container.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     const nx = Math.max(-1, Math.min(1, (e.clientX - cx) / (innerWidth / 2)));
