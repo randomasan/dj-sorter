@@ -35,6 +35,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     thoughtColor: '#4cb3ff',   // цвет «мыслей» (--info из кита)
     thoughtLines: false,       // старый режим: «мысль» на отдельной густой сетке. Теперь — на тех же рёбрах, что и шум
     thoughtRep: 0.3,
+    segments: 6000,            // сколько рёбер в общей сетке (в пене 6000)
     centerBias: 0,             // 0..1: насколько общая сетка гуще к центру (0 — равномерно, как в пене)           // период «мыслей» относительно шума (меньше → мыслей больше)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
@@ -143,7 +144,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   };
   function createShapeGeometry(shapeType, onlyExternal) {
     const positions = [], attributes = [], hot = [], face = [];
-    const step = 2, maxSegments = 6000;
+    const step = 2, maxSegments = params.segments;
     let currentPos = new THREE.Vector3(0, 0, 0);
     let currentDist = 0;
 
