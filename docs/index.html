@@ -33,14 +33,14 @@
 <body>
   <div id="orb" aria-hidden="true"></div>
 
-  <header class="topbar" id="top">
+  <header class="topbar a-wait" id="top">
     <div class="brand-wrap"><span class="brand">dj<b>/</b>sorter</span><span class="version" id="ver"></span></div>
     <nav><a class="btn btn--tertiary btn--sm" href="nerd_mode.html">nerd_mode</a><button class="btn btn--secondary btn--sm" id="logout" hidden>Выйти</button></nav>
   </header>
 
   <section id="hero" class="center">
-    <h1 class="t-display a-in">feed me</h1>
-    <button id="feed" class="btn btn--primary btn--lg a-in a-in-d1" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0a12 12 0 1 0 0 24 12 12 0 0 0 0-24zm5.5 17.3a.75.75 0 0 1-1 .25c-2.8-1.7-6.3-2.1-10.4-1.2a.75.75 0 1 1-.33-1.46c4.5-1 8.4-.6 11.5 1.4.35.2.46.66.24 1.01zm1.47-3.27a.94.94 0 0 1-1.29.31c-3.2-1.97-8.1-2.54-11.9-1.39a.94.94 0 0 1-.54-1.8c4.3-1.3 9.7-.67 13.4 1.6.44.27.58.85.31 1.28zm.13-3.4C15.26 8.35 8.9 8.14 5.2 9.26a1.12 1.12 0 1 1-.65-2.15c4.24-1.29 11.3-1.04 15.7 1.6a1.12 1.12 0 0 1-1.15 1.93z"/></svg>Войти через Spotify</button>
+    <h1 class="t-display a-wait" id="heroTitle">feed me</h1>
+    <button id="feed" class="btn btn--primary btn--lg a-wait" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0a12 12 0 1 0 0 24 12 12 0 0 0 0-24zm5.5 17.3a.75.75 0 0 1-1 .25c-2.8-1.7-6.3-2.1-10.4-1.2a.75.75 0 1 1-.33-1.46c4.5-1 8.4-.6 11.5 1.4.35.2.46.66.24 1.01zm1.47-3.27a.94.94 0 0 1-1.29.31c-3.2-1.97-8.1-2.54-11.9-1.39a.94.94 0 0 1-.54-1.8c4.3-1.3 9.7-.67 13.4 1.6.44.27.58.85.31 1.28zm.13-3.4C15.26 8.35 8.9 8.14 5.2 9.26a1.12 1.12 0 1 1-.65-2.15c4.24-1.29 11.3-1.04 15.7 1.6a1.12 1.12 0 0 1-1.15 1.93z"/></svg>Войти через Spotify</button>
     <div id="heroErr" class="t-err" hidden></div>
   </section>
 
@@ -88,6 +88,7 @@
   } catch {}
 })();
 </script>
+<script>setTimeout(() => { if (!window.ORB) document.querySelectorAll('.a-wait').forEach(el => el.classList.add('is-in')); }, 4000);   // страховка: шар не загрузился — показываем интерфейс без него</script>
 <script src="core.js"></script>
 <script>
 const $ = s => document.querySelector(s);
@@ -198,7 +199,11 @@ addEventListener('scroll', ()=>$('#top').classList.toggle('is-solid', scrollY > 
 </script>
 <script type="module">
   import { mountLoader } from './loader.js';
-  try { window.ORB = mountLoader(document.getElementById('orb'), { gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } }); } catch(e){ console.warn('orb', e); }
+  // загрузка страницы: шар вырастает из точки (2 с) → лого + заголовок → кнопка
+  const stage = (sel) => document.querySelectorAll(sel).forEach(el => el.classList.add('is-in'));
+  const reveal = () => { stage('#top, #heroTitle'); setTimeout(() => stage('#feed'), 450); };
+  try { window.ORB = mountLoader(document.getElementById('orb'), { intro:2, gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } }); } catch(e){ console.warn('orb', e); }
+  setTimeout(reveal, 1800);   // заголовок и лого — к концу роста шара
 </script>
 </body>
 </html>

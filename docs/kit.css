@@ -225,6 +225,9 @@ button.chip:hover{background:#333}
 /* ---------- 15. Движение ---------- */
 .a-in{animation:k-in var(--t-slow) var(--ease-out) both}
 .a-in-d1{animation-delay:.08s}.a-in-d2{animation-delay:.16s}.a-in-d3{animation-delay:.24s}
+/* поэтапное появление по сигналу из JS: элемент скрыт, пока ему не добавят .is-in */
+.a-wait{opacity:0}
+.a-wait.is-in{animation:k-in var(--t-slow) var(--ease-out) both}
 @keyframes k-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 .a-pulse{animation:k-pulse 2s var(--ease-io) infinite}
 @keyframes k-pulse{0%{box-shadow:0 0 0 0 rgba(30,215,96,.45)}70%{box-shadow:0 0 0 16px rgba(30,215,96,0)}100%{box-shadow:0 0 0 0 rgba(30,215,96,0)}}

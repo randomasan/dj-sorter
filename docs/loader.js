@@ -10,7 +10,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 // follow:true — шар зафиксирован фронтально и наклоняется к курсору, пока мышь двигается; остановилась → плавно домой.
 // axes:true — оси XYZ внутри шара (для отладки).
 // thought:true — «мысль в мозгу»: участок сетки внутри шара с более частыми сигналами своего цвета, иногда вспыхивает.
-export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false, thought = false } = {}) {
+export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false, thought = false, intro = 0 } = {}) {
+  // intro: N секунд — шар «вырастает из точки» с доворотом (0 — без интро)
   const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
 
   // --- 1. Scene Setup ---
@@ -463,6 +464,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   const BRAKE_SPEED = 0.35, BRAKE_MIN = 0.04;   // порог скорости курсора (px/мс) и остаточная скорость мыслей
   let brake = 1;
+  let introLeft = intro > 0 && !matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clock = new THREE.Clock();
   let t = 0, boost = 1, boostTarget = 1, running = true;
   function animate() {
@@ -483,6 +485,13 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       material.uniforms.uPulse.value = pulseLevel(clock.elapsedTime);
     }
     if (follow) { followStep(dt); controls.update(); }
+    if (introLeft) {
+      // появление: масштаб 0 → 1 (easeOutCubic) и доворот на 1.25 оборота вокруг Y, который гасится к концу
+      const p = Math.min(1, clock.elapsedTime / intro), e = 1 - Math.pow(1 - p, 3);
+      rig.scale.setScalar(Math.max(0.001, e));
+      rig.rotation.y = (follow ? rig.rotation.y : 0) + (1 - e) * Math.PI * 2.5;
+      if (p >= 1) { introLeft = false; rig.scale.setScalar(1); if (!follow) rig.rotation.y = 0; }
+    }
     else { controls.autoRotateSpeed = 0.5 * boost; controls.update(); }
     if (params.useBloom) composer.render(); else renderer.render(scene, camera);
   }
