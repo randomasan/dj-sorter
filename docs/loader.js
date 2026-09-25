@@ -150,6 +150,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
   const fragmentShader = `
     uniform vec3 colorLine;
     uniform vec3 colorDot;
+    uniform vec3 uBgRaw;
     uniform float uTime;
     uniform float uSpeed;
     uniform float uDotLength;
@@ -165,7 +166,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
       float lengthVal = (uDotRepeat * 10.0) * uDotLength;
       float signal = smoothstep((uDotRepeat * 10.0) - lengthVal, (uDotRepeat * 10.0), flow);
       if (flow < (uDotRepeat * 10.0) - lengthVal) signal = 0.0;
-      vec3 finalColor = mix(colorLine, colorDot, signal);
+      // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно colorDot
+      vec3 finalColor = mix(colorLine, max(colorDot - uBgRaw, 0.0), signal);
       float finalAlpha = max(alpha, signal);
       gl_FragColor = vec4(finalColor, finalAlpha);
       if (uUseFog) {
@@ -180,7 +182,10 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
     vertexShader, fragmentShader,
     uniforms: {
       colorLine: { value: new THREE.Color(params.lineColor) },
-      colorDot: { value: new THREE.Color(params.dotColor) },
+      // цвет сигнала передаём как есть (без sRGB→linear): шейдер не делает обратного преобразования,
+      // иначе зелёный из кита на экране уезжает в «кислотный»
+      colorDot: { value: new THREE.Color().setStyle(params.dotColor, THREE.LinearSRGBColorSpace) },
+      uBgRaw: { value: new THREE.Color().setStyle(params.backgroundColor, THREE.LinearSRGBColorSpace) },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -208,10 +213,10 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
   fGeo.add(params, 'onlyExternal').name('Only External').onChange(rebuildGeo);
   const fColors = gui.addFolder('Colors');
   fColors.addColor(params, 'backgroundColor').name('Background').onChange(val => {
-    scene.background.set(val); scene.fog.color.set(val); material.uniforms.uFogColor.value.set(val);
+    scene.background.set(val); scene.fog.color.set(val); material.uniforms.uBgRaw.value.setStyle(val, THREE.LinearSRGBColorSpace); material.uniforms.uFogColor.value.set(val);
   });
   fColors.addColor(params, 'lineColor').name('Wire Color').onChange(val => material.uniforms.colorLine.value.set(val));
-  fColors.addColor(params, 'dotColor').name('Signal Color').onChange(val => material.uniforms.colorDot.value.set(val));
+  fColors.addColor(params, 'dotColor').name('Signal Color').onChange(val => material.uniforms.colorDot.value.setStyle(val, THREE.LinearSRGBColorSpace));
   const fSignal = gui.addFolder('Signal Props');
   fSignal.add(params, 'speed', 0.1, 2.0).name('Flow Speed').onChange(val => material.uniforms.uSpeed.value = val);
   fSignal.add(params, 'dotLength', 0.01, 0.5).name('Signal Tail').onChange(val => material.uniforms.uDotLength.value = val);
