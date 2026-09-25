@@ -10,7 +10,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 // follow:true — шар зафиксирован фронтально и наклоняется к курсору, пока мышь двигается; остановилась → плавно домой.
 // axes:true — оси XYZ внутри шара (для отладки).
 // thought:true — «мысль в мозгу»: участок сетки внутри шара с более частыми сигналами своего цвета, иногда вспыхивает.
-export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false, thought = false, intro = 0 } = {}) {
+export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false, thought = false, intro = 0, startTilt = 'auto' } = {}) {
   // intro: число N — вариант 1 «рост из точки» с доворотом за N с (тег intro-grow-v1);
   //        'build' — вариант 2: яркая точка → из неё строится сетка → запускается шум → потом мысли
   const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
@@ -422,6 +422,11 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   });
   const home = { x: 0, y: 0 };
   let wasMoving = false;
+  // стартовый ракурс: не строго анфас — случайная стики-точка кольца 0.2 рад (~11°); 'auto' включается для интро 'build'
+  // [x,y] — свой угол, 0/false — анфас. Шар появляется чуть «перекрученным» (×1.8) и сам доворачивается к этому углу.
+  const tilt0 = Array.isArray(startTilt) ? startTilt
+    : (startTilt === 'auto' && intro) ? STICKY[7 + Math.floor(Math.random() * 8)] : null;
+  if (tilt0) { home.x = tilt0[0]; home.y = tilt0[1]; cur.x = tilt0[0] * 1.8; cur.y = tilt0[1] * 1.8; rig.rotation.set(cur.x, cur.y, 0); }
   const nearestSticky = (x, y) => {
     let best = STICKY[0], bd = 1e9;
     for (const q of STICKY) { const d = (q[0] - x) ** 2 + (q[1] - y) ** 2; if (d < bd) { bd = d; best = q; } }
