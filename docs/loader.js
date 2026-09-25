@@ -399,9 +399,24 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     speed += (Math.min(v, 4) - speed) * 0.35;
     lastX = e.clientX; lastY = e.clientY; lastT = now; lastMove = now;
   }, { passive: true });
+  // «Стики-поинты»: после реакции на курсор шар возвращается не в (0,0), а в ближайшую точку этой сетки.
+  // Сетка — наклоны в передней полусфере, кольцами вокруг центра; к центру плотнее (кольца ближе друг к другу).
+  const STICKY = [[0, 0]];
+  [[0.09, 6], [0.2, 8], [0.33, 10]].forEach(([r, n], ring) => {
+    for (let i = 0; i < n; i++) { const a = (i + ring * 0.5) / n * Math.PI * 2; STICKY.push([Math.sin(a) * r, Math.cos(a) * r]); }
+  });
+  const home = { x: 0, y: 0 };
+  let wasMoving = false;
+  const nearestSticky = (x, y) => {
+    let best = STICKY[0], bd = 1e9;
+    for (const q of STICKY) { const d = (q[0] - x) ** 2 + (q[1] - y) ** 2; if (d < bd) { bd = d; best = q; } }
+    return best;
+  };
   const followStep = (dt) => {
     const moving = performance.now() - lastMove < IDLE;
-    const tx = moving ? aim.x : 0, ty = moving ? aim.y : 0;
+    if (wasMoving && !moving) { const q = nearestSticky(cur.x, cur.y); home.x = q[0]; home.y = q[1]; }   // остановился → «прилипаем» к ближайшей
+    wasMoving = moving;
+    const tx = moving ? aim.x : home.x, ty = moving ? aim.y : home.y;
     if (!moving) speed *= Math.exp(-dt * 6);
     const rate = moving ? RATE_MIN + (RATE_MAX - RATE_MIN) * Math.min(1, speed / 3.5) : RATE_RETURN;
     const k = 1 - Math.exp(-dt * rate);
@@ -487,7 +502,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   return {
     setActive(on) { boostTarget = on ? 3.5 : 1; },
     pulse(kind = 'thought') { spawn(kind); },
-    _brake() { return brake; },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
+    _brake() { return brake; },
+    _home() { return [home.x, home.y]; },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
     params,
   };
 }
