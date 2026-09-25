@@ -33,7 +33,6 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     dotLength: 0.01,
     dotDensity: 1.809,
     thoughtColor: '#4cb3ff',   // цвет сигналов «мысли» (--info из кита)
-    faceColor: '#b3b3b3',      // контур рта и глаз у формы Pac (--fg-sub)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -54,7 +53,13 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   controls.enableZoom = false;       // колесо мыши скроллит страницу, а не зумит сцену
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.5;
-  if (follow) { controls.autoRotate = false; controls.enabled = false; }
+  let dragging = false;
+  if (follow) {
+    // крутить мышкой можно; автовращения нет; зум и пан выключены
+    controls.autoRotate = false; controls.enablePan = false;
+    controls.addEventListener('start', () => { dragging = true; });
+    controls.addEventListener('end', () => { dragging = false; });
+  }
 
   // --- 2. Post Processing (Bloom) ---
   const renderScene = new RenderPass(scene, camera);
@@ -116,7 +121,9 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   }
 
   // «мысль»: сфера внутри формы, где сетка гуще (отдельные блуждания) и сигналы помечены aHot=1
-  const HOT = { c: new THREE.Vector3(-4, 3, 2), r: 4.6, segments: 900 };
+  // «мысль» в центре, размытая: плотность и «горячесть» плавно спадают от центра к R
+  const HOT = { c: new THREE.Vector3(0, 0, 0), r: 9.5, segments: 1500 };
+  const hotW = (p) => { const d = Math.max(0, p.distanceTo(HOT.c) / HOT.r - 0.3) / 0.7; return d >= 1 ? 0 : 1 - d*d*(3 - 2*d); };  // ядро ~30% R, дальше плавно к 0
   // «лицо» Pac: полоса вокруг рта и глаз — там сетка гуще и контур ярче, чтобы лицо читалось анфас
   const EYES = [[-4, 5.5, 8], [4, 5.5, 8]];
   const inFaceRim = (p) => {
@@ -163,7 +170,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       }
     }
     if (thought) {
-      const inHot = (p) => p.distanceTo(HOT.c) < HOT.r && isPointInside(p, shapeType);
+      const inHot = (p) => isPointInside(p, shapeType) && Math.random() < 0.15 + 0.85 * hotW(p);  // ближе к центру — гуще
       const startHot = () => {
         const p = new THREE.Vector3();
         for (let k = 0; k < 200; k++) {
@@ -180,7 +187,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
         if (inHot(np)) {
           positions.push(hp.x, hp.y, hp.z, np.x, np.y, np.z);
           attributes.push(currentDist, currentDist + step);
-          hot.push(1, 1); face.push(0, 0);
+          hot.push(hotW(hp), hotW(np)); face.push(0, 0);
           currentDist += step; hp.copy(np);
         } else { currentDist += 30.0; hp = startHot(); }
       }
@@ -242,12 +249,11 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     uniform bool uUseFog;
     uniform vec3 colorThought;
     uniform float uPulse;       // 0..1 — вспышка «мысли»
-    uniform vec3 colorFace;
     varying float vDistance;
     varying float vHot;
     varying float vFace;
     void main() {
-      float alpha = mix(mix(0.2, 0.22, vHot), 0.27, vFace);    // «мысль» чуть заметнее, контур лица — ещё заметнее
+      float alpha = mix(0.2, 0.22, vHot);                       // «мысль» чуть заметнее; лицо — тем же цветом, что и всё
       float rep = uDotRepeat * mix(1.0, 0.38, vHot) * 10.0;     // и сигналов там в ~2.5 раза больше
       float distanceState = vDistance - uTime * uSpeed * 10.0 * mix(1.0, 1.4 + uPulse, vHot);
       float flow = mod(distanceState, rep);
@@ -256,8 +262,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       if (flow < rep - lengthVal) signal = 0.0;
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно colorDot
       vec3 dotC = mix(colorDot, colorThought, vHot);
-      vec3 lineC = mix(colorLine, colorFace, vFace);
-      vec3 finalColor = mix(lineC, max(dotC - uBgRaw, 0.0), signal);
+      vec3 finalColor = mix(colorLine, max(dotC - uBgRaw, 0.0), signal);
       finalColor *= 1.0 + vHot * uPulse * 2.2;                  // иногда ярче
       float finalAlpha = max(alpha, signal);
       gl_FragColor = vec4(finalColor, finalAlpha);
@@ -279,7 +284,6 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       uBgRaw: { value: new THREE.Color().setStyle(params.backgroundColor, THREE.LinearSRGBColorSpace) },
       colorThought: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) },
       uPulse: { value: 0 },
-      colorFace: { value: new THREE.Color(params.faceColor) },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -345,6 +349,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   let ancX = null, ancY = null;
   if (follow) addEventListener('pointermove', (e) => {
     if (ancX === null) { ancX = e.clientX; ancY = e.clientY; lastX = ancX; lastY = ancY; lastT = performance.now(); return; }
+    if (dragging) { ancX = e.clientX; ancY = e.clientY; return; }        // пока тянут — крутит OrbitControls, наклон не трогаем
     if (Math.hypot(e.clientX - ancX, e.clientY - ancY) < THRESH) return;   // дрожание руки не считаем
     ancX = e.clientX; ancY = e.clientY;
     const r = container.getBoundingClientRect();
@@ -386,7 +391,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       const a = pulseT < 0 ? 99 : now - pulseT;
       material.uniforms.uPulse.value = a < 0.15 ? a / 0.15 : Math.exp(-(a - 0.15) * 2.2);
     }
-    if (follow) followStep(dt);
+    if (follow) { followStep(dt); controls.update(); }
     else { controls.autoRotateSpeed = 0.5 * boost; controls.update(); }
     if (params.useBloom) composer.render(); else renderer.render(scene, camera);
   }
