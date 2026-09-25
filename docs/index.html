@@ -75,8 +75,19 @@
     <button class="btn btn--secondary btn--sm" id="more" hidden>Показать ещё</button>
   </main>
 
-<script src="version.js"></script>
-<script>document.getElementById('ver').textContent = (window.APP_VERSION && window.APP_VERSION.label) || '';</script>
+<script>
+// код версии = короткий хэш коммита, который сейчас задеплоен на GitHub Pages (публичный API, без ключей)
+(async () => {
+  const el = document.getElementById('ver'), KEY = 'ver.sha';
+  try { const c = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (c && Date.now() - c.t < 3e5) { el.textContent = c.sha; return; } } catch {}
+  try {
+    const r = await fetch('https://api.github.com/repos/randomasan/dj-sorter/deployments?environment=github-pages&per_page=1');
+    const d = await r.json(); const sha = Array.isArray(d) && d[0] ? d[0].sha.slice(0, 7) : '';
+    el.textContent = sha;
+    try { sessionStorage.setItem(KEY, JSON.stringify({ sha, t: Date.now() })); } catch {}
+  } catch {}
+})();
+</script>
 <script src="core.js"></script>
 <script>
 const $ = s => document.querySelector(s);

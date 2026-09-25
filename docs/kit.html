@@ -177,10 +177,10 @@
   <h2 class="t-h2">Шапка</h2>
   <p>Фиксированная, прозрачная; после скролла — <code>.is-solid</code> (полупрозрачный фон + blur). Лого — <code>.brand</code>.</p>
   <div class="demo" style="position:relative;padding:0;overflow:hidden;height:64px">
-    <div class="topbar is-solid" style="position:absolute;height:64px;padding-top:0"><div class="brand-wrap"><span class="brand">dj<b>/</b>sorter</span><span class="version">v0.56 · 25.09.2026</span></div><nav><a class="btn btn--tertiary btn--sm">nerd_mode</a><button class="btn btn--secondary btn--sm">Выйти</button></nav></div>
+    <div class="topbar is-solid" style="position:absolute;height:64px;padding-top:0"><div class="brand-wrap"><span class="brand">dj<b>/</b>sorter</span><span class="version">a966439</span></div><nav><a class="btn btn--tertiary btn--sm">nerd_mode</a><button class="btn btn--secondary btn--sm">Выйти</button></nav></div>
   </div>
-<pre>&lt;header class="topbar"&gt;&lt;div class="brand-wrap"&gt;&lt;span class="brand"&gt;dj&lt;b&gt;/&lt;/b&gt;sorter&lt;/span&gt;&lt;span class="version"&gt;v0.56 · 25.09.2026&lt;/span&gt;&lt;/div&gt;&lt;nav&gt;…&lt;/nav&gt;&lt;/header&gt;
-.version — код версии под лого; текст берётся из docs/version.js (пишет git pre-commit хук)</pre>
+<pre>&lt;header class="topbar"&gt;&lt;div class="brand-wrap"&gt;&lt;span class="brand"&gt;dj&lt;b&gt;/&lt;/b&gt;sorter&lt;/span&gt;&lt;span class="version"&gt;a966439&lt;/span&gt;&lt;/div&gt;&lt;nav&gt;…&lt;/nav&gt;&lt;/header&gt;
+.version — короткий хэш задеплоенного коммита (GitHub deployments API, environment github-pages)</pre>
 </section>
 
 <section id="tracks">
@@ -237,6 +237,7 @@
   <h2 class="t-h2">Журнал</h2>
   <p>Каждое изменение кита — строкой сюда (свежие сверху).</p>
   <table class="log">
+    <tr><td>2026-09-25</td><td>.version показывает короткий хэш задеплоенного коммита (a966439) из GitHub deployments API; кэш 5 мин в sessionStorage. version.js и хук убраны.</td></tr>
     <tr><td>2026-09-25</td><td>Новый элемент .brand-wrap + .version — код версии под лого (11px, --fg-mut, tabular-nums). Номер = число коммитов, пишется хуком в docs/version.js.</td></tr>
     <tr><td>2026-09-25</td><td>Отладочные оси XYZ скрыты (axes:false).</td></tr>
     <tr><td>2026-09-25</td><td>Плотность рёбер: общая сетка 9000 рёбер вместо 6000 (параметр segments).</td></tr>
