@@ -185,7 +185,7 @@ addEventListener('scroll', ()=>$('#top').classList.toggle('is-solid', scrollY > 
 </script>
 <script type="module">
   import { mountLoader } from './loader.js';
-  try { window.ORB = mountLoader(document.getElementById('orb'), { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Cut', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } }); } catch(e){ console.warn('orb', e); }
+  try { window.ORB = mountLoader(document.getElementById('orb'), { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } }); } catch(e){ console.warn('orb', e); }
 </script>
 </body>
 </html>
