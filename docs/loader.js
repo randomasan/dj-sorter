@@ -378,8 +378,41 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     rig.rotation.set(cur.x, cur.y, 0);
   };
 
-  // вспышки «мысли»: раз в 2.5–6 с короткий импульс (быстрый рост, плавный спад)
-  let pulseT = -1, nextPulse = 2 + Math.random() * 3;
+  // «Мысль»: фон — спокойное размышление (медленное «дыхание» на 5–15%),
+  // поверх — редкие импульсы трёх видов со случайной силой и формой:
+  //   рябь 65%   — слабая (0.15–0.35), мягкий рост 0.4–0.9 с, долгий спад 2–4 с
+  //   мысль 28%  — средняя (0.4–0.65), рост 0.15–0.35 с, спад 1–2 с; в 35% случаев тянет за собой «цепочку» из 1–2 откликов
+  //   озарение 7% — сильная (0.9–1.1), рост 0.06 с, спад 0.5–0.9 с, иногда двойная
+  // Паузы между импульсами — случайные, 2–11 с (чаще 3–6), так что преобладает тишина.
+  const R = (a, b) => a + Math.random() * (b - a);
+  const pulses = [];
+  const addPulse = (amp, rise, decay, delay = 0) => pulses.push({ t0: clock.elapsedTime + delay, amp, rise, decay });
+  const spawn = (kind) => {
+    const k = kind || (() => { const r = Math.random(); return r < 0.65 ? 'ripple' : r < 0.93 ? 'thought' : 'insight'; })();
+    if (k === 'ripple') addPulse(R(0.15, 0.35), R(0.4, 0.9), R(2, 4));
+    else if (k === 'thought') {
+      addPulse(R(0.4, 0.65), R(0.15, 0.35), R(1, 2));
+      if (Math.random() < 0.35) { const n = 1 + (Math.random() < 0.4); for (let i = 1; i <= n; i++) addPulse(R(0.2, 0.4), R(0.15, 0.3), R(0.8, 1.5), i * R(0.35, 0.8)); }
+    } else {
+      addPulse(R(0.9, 1.1), 0.06, R(0.5, 0.9));
+      if (Math.random() < 0.4) addPulse(R(0.5, 0.8), 0.05, R(0.4, 0.7), R(0.18, 0.3));
+    }
+  };
+  const nextGap = () => Math.min(11, 2 + (-Math.log(1 - Math.random())) * 2.6);   // экспоненциальные паузы, среднее ~4.6 с
+  let nextPulse = 0;
+  const pulseLevel = (now) => {
+    if (now > nextPulse) { if (nextPulse) spawn(); nextPulse = now + nextGap(); }
+    const calm = 0.05 + 0.05 * (0.5 + 0.5 * Math.sin(now * 0.7)) + 0.04 * (0.5 + 0.5 * Math.sin(now * 0.23 + 1.3));
+    let v = 0;
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const p = pulses[i], a = now - p.t0;
+      if (a < 0) continue;
+      const e = a < p.rise ? Math.sin((a / p.rise) * Math.PI / 2) : Math.exp(-(a - p.rise) * (3 / p.decay));
+      if (a > p.rise + p.decay * 3) { pulses.splice(i, 1); continue; }
+      v += p.amp * e;
+    }
+    return Math.min(1.2, calm + v);
+  };
 
   const clock = new THREE.Clock();
   let t = 0, boost = 1, boostTarget = 1, running = true;
@@ -391,10 +424,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     t += dt * boost;
     material.uniforms.uTime.value = t;
     if (thought) {
-      const now = clock.elapsedTime;
-      if (now > nextPulse) { pulseT = now; nextPulse = now + 2.5 + Math.random() * 3.5; }
-      const a = pulseT < 0 ? 99 : now - pulseT;
-      material.uniforms.uPulse.value = a < 0.15 ? a / 0.15 : Math.exp(-(a - 0.15) * 2.2);
+      material.uniforms.uPulse.value = pulseLevel(clock.elapsedTime);
     }
     if (follow) { followStep(dt); controls.update(); }
     else { controls.autoRotateSpeed = 0.5 * boost; controls.update(); }
@@ -416,7 +446,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   return {
     setActive(on) { boostTarget = on ? 3.5 : 1; },
-    pulse() { pulseT = clock.elapsedTime; },   // вспышка «мысли» по требованию
+    pulse(kind = 'thought') { spawn(kind); },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
     params,
   };
 }
