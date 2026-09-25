@@ -17,7 +17,7 @@
   body.logo #orb{transform:translate3d(0,calc(100px + env(safe-area-inset-top,0px) - 50vh),0) scale(var(--orb-s,.18));pointer-events:none}
 
   #hero{position:fixed;inset:auto 0 calc(7vh + env(safe-area-inset-bottom,0px)) 0;z-index:2;gap:var(--sp-5)}
-  #prog{position:fixed;left:50%;bottom:calc(9vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(520px,calc(100vw - 32px));z-index:2}
+  #prog{position:fixed;left:0;right:0;margin-inline:auto;bottom:calc(7vh + env(safe-area-inset-bottom,0px));width:min(520px,calc(100vw - 32px));z-index:2}
   #prog .now{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-3)}
   #prog .now b{display:inline-flex;align-items:center;gap:10px;font-size:16px}
   #steps{justify-content:center;margin-top:var(--sp-4);gap:var(--sp-2)}
@@ -113,10 +113,22 @@ function onStep(k, p){
   STEPS.forEach(([key])=>{ $('#s-'+key).className = 'chip chip--sm ' + ST[key].status; });
 }
 
+// заголовок и кнопка уходят (.a-out), на их месте появляются лоадеры (.a-in) — шапка и шар не трогаются
+function swapHeroToProgress(){
+  const h = $('#hero'), pr = $('#prog');
+  const show = () => { h.hidden = true; h.classList.remove('a-out'); pr.hidden = false; pr.classList.remove('a-in'); void pr.offsetWidth; pr.classList.add('a-in'); };
+  if(h.hidden) return show();
+  if(!$('#feed').classList.contains('is-in')) return show();   // вход ещё до появления кнопки — без анимации ухода
+  h.classList.add('a-out');
+  h.addEventListener('animationend', show, { once: true });
+  setTimeout(() => { if(!h.hidden) show(); }, 900);   // страховка, если animationend не пришёл
+}
 function setLoading(on){ window.ORB?.setActive(on); $('#pEq').classList.toggle('is-paused', !on); }
 
+let started = false;
 async function start(){
-  $('#hero').hidden = true; $('#prog').hidden = false; $('#logout').hidden = false;
+  if(started) return; started = true;
+  swapHeroToProgress(); $('#logout').hidden = false;
   setLoading(true);
   try{
     const tracks = await DJ.run(onStep);
@@ -129,9 +141,9 @@ async function start(){
     $('#pLabel').textContent = 'Что-то пошло не так';
     $('#pNote').textContent = e.message;
     const b = document.createElement('button'); b.className='btn btn--secondary btn--sm'; b.style.cssText='display:flex;margin:16px auto 0'; b.textContent='Ещё раз';
-    b.onclick = ()=>{ b.remove(); start(); };
+    b.onclick = ()=>{ b.remove(); started = false; start(); };
     $('#prog').appendChild(b);
-    if(!DJ.loggedIn()){ $('#prog').hidden=true; $('#hero').hidden=false; showErr(e.message); }
+    if(!DJ.loggedIn()){ started = false; $('#prog').hidden=true; $('#hero').hidden=false; showErr(e.message); }
   }
 }
 
@@ -187,12 +199,19 @@ $('#more').onclick = ()=>{ LIMIT += 300; render(); };
 
 /* ---------- старт ---------- */
 function showErr(m){ const el=$('#heroErr'); el.textContent=m; el.hidden=!m; }
-$('#feed').onclick = () => DJ.login();
+$('#feed').onclick = async () => {
+  showErr('');
+  try{ if(await DJ.login(null, { popup: true })) start(); }   // попап: без перезагрузки страницы
+  catch(e){ showErr(e.message); }
+};
 $('#logout').onclick = () => { DJ.logout(); location.reload(); };
 addEventListener('scroll', ()=>$('#top').classList.toggle('is-solid', scrollY > 140), {passive:true});
 (async()=>{
   try{
-    await DJ.handleCallback();          // вернулись из Spotify (или ушли на returnTo)
+    if(await DJ.handleCallback() === 'popup'){   // это окно-попап авторизации: токен отдан главной, окно закрывается
+      setTimeout(() => showErr('Готово — это окно можно закрыть'), 400);   // если браузер не дал закрыть окно скриптом
+      return;
+    }
     if(DJ.loggedIn()) start();          // уже авторизован → сразу грузим (из кэша это секунды)
   }catch(e){ showErr(e.message); }
 })();
@@ -203,7 +222,7 @@ addEventListener('scroll', ()=>$('#top').classList.toggle('is-solid', scrollY > 
   // (прежний вариант «рост из точки» — intro:2 и reveal на 1.8 с, тег intro-grow-v1)
   const stage = (sel) => document.querySelectorAll(sel).forEach(el => el.classList.add('is-in'));
   const reveal = () => { stage('#top, #heroTitle'); setTimeout(() => stage('#feed'), 450); };
-  try { window.ORB = mountLoader(document.getElementById('orb'), { intro:'build', gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } }); } catch(e){ console.warn('orb', e); }
+  if (!window.DJ?.isAuthPopup?.()) try { window.ORB = mountLoader(document.getElementById('orb'), { intro:'build', gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } }); } catch(e){ console.warn('orb', e); }
   setTimeout(reveal, 3000);   // заголовок и лого — когда сетка построена и рождается шум
 </script>
 </body>

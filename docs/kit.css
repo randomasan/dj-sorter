@@ -229,6 +229,9 @@ button.chip:hover{background:#333}
 .a-wait{opacity:0}
 .a-wait.is-in{animation:k-in var(--t-slow) var(--ease-out) both}
 @keyframes k-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+/* уход элемента: гаснет и чуть уезжает вверх; после animationend JS ставит hidden */
+.a-out{animation:k-out var(--t-slow) var(--ease-io) both;pointer-events:none}
+@keyframes k-out{to{opacity:0;transform:translateY(-8px)}}
 .a-pulse{animation:k-pulse 2s var(--ease-io) infinite}
 @keyframes k-pulse{0%{box-shadow:0 0 0 0 rgba(30,215,96,.45)}70%{box-shadow:0 0 0 16px rgba(30,215,96,0)}100%{box-shadow:0 0 0 0 rgba(30,215,96,0)}}
 @media (prefers-reduced-motion:reduce){

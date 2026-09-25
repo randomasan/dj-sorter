@@ -220,9 +220,9 @@
   <p>Токены: <code>--t-fast</code> .12s (hover), <code>--t</code> .2s, <code>--t-slow</code> .5s (появление), <code>--t-orb</code> 1.6s (шар → лого). Кривые: <code>--ease-out</code> (появление), <code>--ease-io</code> (перемещение), <code>--ease-spring</code> (пружина). <code>prefers-reduced-motion</code> глушит всё.</p>
   <div class="demo stack">
     <div class="row" id="animBox"><div class="card card--static a-in">.a-in</div><div class="card card--static a-in a-in-d1">.a-in-d1</div><div class="card card--static a-in a-in-d2">.a-in-d2</div><div class="card card--static a-in a-in-d3">.a-in-d3</div></div>
-    <div class="row"><button class="btn btn--secondary btn--sm" id="replay">Повторить появление</button><button class="btn btn--secondary btn--sm" id="stageBtn">Поэтапно (.a-wait → .is-in)</button><span class="chip a-wait" id="st1">1</span><span class="chip a-wait" id="st2">2</span><button class="btn btn--primary a-pulse">.a-pulse</button></div>
+    <div class="row"><button class="btn btn--secondary btn--sm" id="replay">Повторить появление</button><button class="btn btn--secondary btn--sm" id="stageBtn">Поэтапно (.a-wait → .is-in)</button><span class="chip a-wait" id="st1">1</span><span class="chip a-wait" id="st2">2</span><button class="btn btn--secondary btn--sm" id="outBtn">Уход (.a-out)</button><button class="btn btn--primary a-pulse">.a-pulse</button></div>
   </div>
-<pre>class="a-in a-in-d1"  ·  class="a-pulse"  ·  transition: transform var(--t-orb) var(--ease-io)</pre>
+<pre>class="a-in a-in-d1"  ·  class="a-out" → animationend → hidden  ·  class="a-pulse"  ·  transition: transform var(--t-orb) var(--ease-io)</pre>
 </section>
 
 <section id="orb">
@@ -237,6 +237,7 @@
   <h2 class="t-h2">Журнал</h2>
   <p>Каждое изменение кита — строкой сюда (свежие сверху).</p>
   <table class="log">
+    <tr><td>2026-09-25</td><td>Новый элемент .a-out: уход (гаснет + вверх 8px), после animationend — hidden. Главная: вход через Spotify в попапе без перезагрузки — шапка и шар остаются, заголовок с кнопкой уходят (.a-out), на их месте появляются лоадеры (.a-in).</td></tr>
     <tr><td>2026-09-25</td><td>Интро v2: частицы не проявляются фейдом, а рождаются — у каждой свой момент в окне (шум 1.2 с, затем мысли 1.4 с): вспышка-точка светлеет к белому, хвост вырастает до полной длины за ~0.45 с. Заголовок на 3.0 с.</td></tr>
     <tr><td>2026-09-25</td><td>Интро вариант 2 (intro:'build'): яркая зелёная точка 0.4 с → сетка строится от центра фронтом с зелёной кромкой 1.8 с → шум 0.6 с → мысли 0.8 с; лого+заголовок на 2.8 с, кнопка +0.45 с. Вариант 1 (рост из точки, intro:2) сохранён — тег intro-grow-v1.</td></tr>
     <tr><td>2026-09-25</td><td>Новый элемент .a-wait → .is-in: поэтапное появление по сигналу из JS. Загрузка главной: шар растёт из точки 2 с с доворотом 1.25 оборота (mountLoader intro:2) → на 1.8 с лого+заголовок → +0.45 с кнопка.</td></tr>
@@ -281,6 +282,7 @@
   const cs = getComputedStyle(document.documentElement);
   document.getElementById('swatches').innerHTML = T.map(([v,n])=>`<div><i style="background:var(${v})"></i><span>${n}<small>${v} ${cs.getPropertyValue(v).trim()}</small></span></div>`).join('');
   document.querySelectorAll('#chipDemo .chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('#chipDemo .chip').forEach(x=>x.classList.toggle('is-active',x===c));});
+  document.getElementById('outBtn').onclick=()=>{const a=document.getElementById('st1'),b=document.getElementById('st2');[a,b].forEach(x=>{x.classList.remove('a-out');x.classList.add('is-in');});setTimeout(()=>[a,b].forEach(x=>x.classList.add('a-out')),600);};
   document.getElementById('stageBtn').onclick=()=>{const a=document.getElementById('st1'),b=document.getElementById('st2');[a,b].forEach(x=>x.classList.remove('is-in'));requestAnimationFrame(()=>{a.classList.add('is-in');setTimeout(()=>b.classList.add('is-in'),450);});};
   document.getElementById('replay').onclick=()=>{const b=document.getElementById('animBox');const h=b.innerHTML;b.innerHTML='';requestAnimationFrame(()=>b.innerHTML=h);};
   let pv=30; setInterval(()=>{pv=(pv+7)%105;document.getElementById('pDemo').style.width=Math.min(pv,100)+'%';},600);

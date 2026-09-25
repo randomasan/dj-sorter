@@ -44,26 +44,68 @@ function bpmDiff(a, b){
 /* ================= spotify PKCE ================= */
 const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 function randStr(n=64){ const a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a).slice(0,n); }
-async function login(returnTo){
+// opt.popup: авторизация в отдельном окне — страница не перезагружается.
+// Окно открываем синхронно (до await), иначе Safari/мобильные браузеры его заблокируют.
+// Результат приходит через localStorage (событие storage + опрос): попап пишет 'tok' или 'auth.err'.
+// Возвращает Promise<true> после входа; если попап заблокирован — обычный редирект.
+let authStop = null;
+async function login(returnTo, opt = {}){
+  let win = null;
+  if(opt.popup){
+    const w = Math.min(480, screen.availWidth), h = Math.min(760, screen.availHeight);
+    win = window.open('', 'dj-auth', `popup=yes,width=${w},height=${h},left=${Math.round((screen.availWidth-w)/2)},top=${Math.round((screen.availHeight-h)/2)}`);
+  }
   const verifier = randStr(64);
   const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
   LS.set('pkce.verifier', verifier);
   if(returnTo) LS.set('returnTo', returnTo); else LS.del('returnTo');
   const p = new URLSearchParams({client_id:CLIENT_ID,response_type:'code',redirect_uri:REDIRECT,scope:SCOPES,code_challenge_method:'S256',code_challenge:challenge});
-  location.href = 'https://accounts.spotify.com/authorize?' + p;
+  const url = 'https://accounts.spotify.com/authorize?' + p;
+  if(win){
+    const before = localStorage.getItem('tok');
+    LS.set('auth.popup', Date.now()); LS.del('auth.err');
+    win.location.href = url;
+    authStop?.();   // предыдущий попап бросили — перестаём его ждать
+    return new Promise((res, rej) => {
+      const check = () => {
+        const err = LS.get('auth.err');
+        if(err){ done(); LS.del('auth.err'); rej(new Error(err)); return; }
+        const now = localStorage.getItem('tok');
+        if(now && now !== before){ done(); res(true); }
+      };
+      const iv = setInterval(check, 400);
+      const done = authStop = () => { authStop = null; clearInterval(iv); removeEventListener('storage', check); LS.del('auth.popup'); try{ win.close(); }catch{} };
+      addEventListener('storage', check);
+    });
+  }
+  LS.del('auth.popup');
+  location.href = url;
 }
+// это окно — попап авторизации (открыт главной не дольше 10 минут назад)
+const isAuthPopup = () => {
+  const t = LS.get('auth.popup'), q = new URLSearchParams(location.search);
+  return !!t && Date.now() - t < 600e3 && (q.has('code') || q.has('error'));
+};
 async function tokenReq(body){
   const r = await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body)});
   const j = await r.json(); if(!r.ok) throw new Error('token: '+(j.error_description||j.error));
   LS.set('tok',{access:j.access_token, refresh:j.refresh_token||LS.get('tok',{}).refresh, exp:Date.now()+(j.expires_in-60)*1000});
 }
 // возвращает true, если только что обменяли code на токен
+// в попапе: обменивает code, отдаёт результат главной через localStorage, закрывается; возвращает 'popup'
 async function handleCallback(){
   const p = new URLSearchParams(location.search);
-  if(p.get('error')) throw new Error('Spotify: '+p.get('error'));
+  const popup = isAuthPopup();
+  if(p.get('error')){
+    if(popup){ LS.set('auth.err', 'Spotify: '+p.get('error')); window.close(); return 'popup'; }
+    throw new Error('Spotify: '+p.get('error'));
+  }
   if(!p.get('code')) return false;
-  await tokenReq({client_id:CLIENT_ID,grant_type:'authorization_code',code:p.get('code'),redirect_uri:REDIRECT,code_verifier:LS.get('pkce.verifier')});
+  try{
+    await tokenReq({client_id:CLIENT_ID,grant_type:'authorization_code',code:p.get('code'),redirect_uri:REDIRECT,code_verifier:LS.get('pkce.verifier')});
+  }catch(e){ if(popup){ LS.set('auth.err', e.message); window.close(); return 'popup'; } throw e; }
   history.replaceState(null,'',location.pathname);
+  if(popup){ window.close(); return 'popup'; }   // главная увидит новый 'tok' и продолжит сама
   const back = LS.get('returnTo'); LS.del('returnTo');
   if(back){ location.replace(BASE + back); }
   return true;
@@ -261,6 +303,6 @@ async function run(onStep, {refetch=false}={}){
   return tracks;
 }
 
-window.DJ = { LS, NET, login, logout, handleCallback, accessToken, loggedIn, run,
+window.DJ = { LS, NET, login, logout, handleCallback, isAuthPopup, accessToken, loggedIn, run,
   camelot, camStr, keyName, normalizeTrack, BASE };
 })();
