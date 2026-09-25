@@ -255,23 +255,28 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     uniform bool uUseFog;
     uniform vec3 colorThought;
     uniform float uPulse;       // 0..1 — вспышка «мысли»
-    uniform float uGather;      // 0..1 — насколько «мысль» ушла в конус
+    uniform float uGather;      // 0..1 — доля голубых сигналов, ушедших в конус (= доля видимых точек облака)
+    uniform float uHotTime;     // своё время «мысли» (интегрируется в JS, чтобы импульсы не дёргали фазу)
     varying float vDistance;
     varying float vHot;
     varying float vFace;
     void main() {
       float alpha = mix(0.2, 0.22, vHot);                       // «мысль» чуть заметнее; лицо — тем же цветом, что и всё
       float rep = uDotRepeat * mix(1.0, 0.38, vHot) * 10.0;     // и сигналов там в ~2.5 раза больше
-      float distanceState = vDistance - uTime * uSpeed * 10.0 * mix(1.0, 1.4 + uPulse, vHot);
+      float distanceState = vDistance - mix(uTime, uHotTime, vHot) * uSpeed * 10.0;
       float flow = mod(distanceState, rep);
       float lengthVal = rep * uDotLength;
       float signal = smoothstep(rep - lengthVal, rep, flow);
       if (flow < rep - lengthVal) signal = 0.0;
+      // сохранение числа «мыслей»: у каждого сигнала свой id; доля uGather из них «ушла» в конус и на линии не рисуется
+      float sid = floor(distanceState / rep);
+      float taken = step(fract(sin(sid * 12.9898 + 78.233) * 43758.5453), uGather);
+      signal *= 1.0 - taken * vHot;
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно colorDot
       vec3 dotC = mix(colorDot, colorThought, vHot);
       vec3 finalColor = mix(colorLine, max(dotC - uBgRaw, 0.0), signal);
       finalColor *= 1.0 + vHot * uPulse * 2.2;
-      finalColor *= 1.0 - vHot * signal * uGather * 0.85;        // пока собирается конус, голубые сигналы на линиях гаснут                  // иногда ярче
+                  // иногда ярче
       float finalAlpha = max(alpha, signal);
       gl_FragColor = vec4(finalColor, finalAlpha);
       if (uUseFog) {
@@ -293,6 +298,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       colorThought: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) },
       uPulse: { value: 0 },
       uGather: { value: 0 },
+      uHotTime: { value: 0 },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -324,7 +330,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   // G — общее «внимание»: растёт, пока курсор движется быстрее порога; иначе медленно гаснет.
   // s_i — порог включения точки (разные → конус «собирается» постепенно), k_i — её скорость.
   // Точка 0 — вершина конуса: одна яркая точка, смотрит на курсор.
-  const T_N = 420, CONE = { back: 3, len: 14, rBase: 5.2 };  // база в −3·dir, вершина в +11·dir (внутри r=12)
+  const CONE = { back: 3, len: 14, rBase: 5.2 };  // база в −3·dir, вершина в +11·dir (внутри r=12)
   let tCloud = null;
   const tMat = new THREE.ShaderMaterial({
     uniforms: { uColor: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) }, uPx: { value: renderer.getPixelRatio() } },
@@ -368,6 +374,13 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       let sum = 0; for (const m of c) sum += m.w; let r = Math.random() * sum;
       for (const m of c) { r -= m.w; if (r <= 0) return m; } return c[0];
     };
+    // сколько голубых сигналов на линиях в покое: Σ по рёбрам «мысли» (длина / период сигнала) · «голубизна»
+    let colored = 0;
+    for (let i = 0; i < P.length; i += 6) {
+      const h = (H[i / 3] + H[i / 3 + 1]) / 2; if (h <= 0) continue;
+      colored += h * 2 / (params.dotDensity * 10 * (1 - 0.62 * h));
+    }
+    const T_N = Math.max(40, Math.min(700, Math.round(colored || 300)));
     const pts = [];
     for (let i = 0; i < T_N; i++) {
       const from = pickNode(), to = pickNext(from, null);
@@ -524,7 +537,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     perpA.set(0, 1, 0); if (Math.abs(dirL.y) > 0.9) perpA.set(1, 0, 0);
     perpA.cross(dirL).normalize(); perpB.copy(dirL).cross(perpA).normalize();
     const g = tCloud.points.geometry, P = g.attributes.position.array, S = g.attributes.aSize.array, B = g.attributes.aBright.array;
-    const pts = tCloud.pts;
+    const pts = tCloud.pts; let sumE = 0;
     for (let i = 0; i < pts.length; i++) {
       const q = pts[i];
       // по сетке
@@ -534,7 +547,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       // в конус
       const at = Math.min(1, Math.max(0, (G - q.s) / (1 - q.s)));
       q.a += (at - q.a) * (1 - Math.exp(-dt * q.k));
-      const e = q.a * q.a * (3 - 2 * q.a);
+      const e = q.a * q.a * (3 - 2 * q.a); sumE += e;
       if (i > 0 && G > 0.05) { q.u += q.flow * dt * G; if (q.u > 1) q.u -= 1; }   // мысли стекают к вершине
       const along = -CONE.back + q.u * CONE.len, rad = CONE.rBase * (1 - q.u) * q.rho;
       cp.copy(dirL).multiplyScalar(along)
@@ -546,9 +559,9 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       const fade = i === 0 ? 1 : Math.min(1, q.u * 8, (1 - q.u) * 12 + 0.3 * (1 - e));
       // в покое точки не видны — «мысль» рисуют сигналы на линиях; видимы только по мере сбора в конус
       if (i === 0) { S[i] = 3 + 13 * e; B[i] = e * (1.9 + 0.2 * Math.sin(now * 9)); }
-      else { S[i] = 3.4 + 0.8 * e; B[i] = e * (0.9 + 0.3 * twk) * (0.4 + 0.6 * fade); }
+      else { S[i] = 2.8; B[i] = e * (1.0 + 0.3 * twk) * (0.55 + 0.45 * fade); }   // размер ~ как голова сигнала, чтобы «масса» не росла
     }
-    material.uniforms.uGather.value = G;
+    material.uniforms.uGather.value = sumE / pts.length;   // сколько точек «вышло» из линий — столько сигналов на линиях и спрятано
     g.attributes.position.needsUpdate = true; g.attributes.aSize.needsUpdate = true; g.attributes.aBright.needsUpdate = true;
   }
 
@@ -561,6 +574,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     boost += (boostTarget - boost) * Math.min(1, dt * 3);
     t += dt * boost;
     material.uniforms.uTime.value = t;
+    material.uniforms.uHotTime.value += dt * boost * (1.4 + material.uniforms.uPulse.value);
     if (thought) {
       material.uniforms.uPulse.value = pulseLevel(clock.elapsedTime);
       stepCloud(dt, clock.elapsedTime, material.uniforms.uPulse.value);
@@ -586,7 +600,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   return {
     setActive(on) { boostTarget = on ? 3.5 : 1; },
     pulse(kind = 'thought') { spawn(kind); },
-    _cone() { return G; },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
+    _cone() { return G; },
+    _count() { return tCloud ? tCloud.pts.length : 0; },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
     params,
   };
 }
