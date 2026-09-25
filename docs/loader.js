@@ -73,11 +73,14 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       case 'Cube': return Math.abs(x) < r && Math.abs(y) < r && Math.abs(z) < r;
       case 'Sphere': return (x*x + y*y + z*z) < (r*r);
       case 'Pac': {
-        // сфера с неглубоким «ртом» справа (клин ±17° в плоскости XY, от x>4.5 — не до центра) и маленьким «глазом» спереди-сверху
+        // сфера лицом к зрителю: неглубокий «рот» спереди (клин ±17° в плоскости YZ, от z>4.5 — не до центра) и два «глаза»
         if ((x*x + y*y + z*z) >= r*r) return false;
-        if (x > 4.5 && Math.abs(Math.atan2(y, x)) < 0.3) return false;
-        const ex = x - 4, ey = y - 6, ez = z - 8;
-        if (ex*ex + ey*ey + ez*ez < 2.6*2.6) return false;
+        // лицом к зрителю (+Z): рот — горизонтальный клин спереди, глаза — две полости сверху
+        if (z > 4.5 && Math.abs(Math.atan2(y, z)) < 0.3) return false;
+        for (const sx of [-4, 4]) {
+          const ex = x - sx, ey = y - 5.5, ez = z - 8;
+          if (ex*ex + ey*ey + ez*ez < 2.6*2.6) return false;
+        }
         return true;
       }
       case 'Pyramid': {
