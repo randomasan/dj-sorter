@@ -33,9 +33,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     dotLength: 0.01,
     dotDensity: 1.809,
     thoughtColor: '#4cb3ff',   // цвет «мыслей» (--info из кита)
-    thoughtLines: true,
-    thoughtBpm: 120,           // ритм смещения «мысли» по оси Y
-    thoughtSwing: 1.6,         // амплитуда (шаг сетки = 2)        // «мысль» в покое — голубые сигналы на густой сетке в центре (как было)
+    thoughtLines: true,        // «мысль» в покое — голубые сигналы на густой сетке в центре (как было)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -238,13 +236,11 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     varying float vDistance;
     varying float vHot;
     varying float vFace;
-    uniform vec3 uHotShift;     // смещение геометрии «мысли»: центр (aHot=1) двигается целиком, края (aHot→0) остаются на месте
     void main() {
       vDistance = lineDistance;
       vHot = aHot;
       vFace = aFace;
-      vec3 p = position + uHotShift * aHot;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`;
   const fragmentShader = `
     uniform vec3 colorLine;
@@ -297,7 +293,6 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       colorThought: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) },
       uPulse: { value: 0 },
       uHotTime: { value: 0 },
-      uHotShift: { value: new THREE.Vector3() },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -433,12 +428,6 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     t += dt * boost;
     material.uniforms.uTime.value = t;
     material.uniforms.uHotTime.value += dt * boost * (1.4 + material.uniforms.uPulse.value);
-    if (thought) {
-      // ритмичное качание центра «мысли» по Y: на каждый бит быстрый толчок вверх и мягкий возврат вниз
-      const ph = (clock.elapsedTime * params.thoughtBpm / 60) % 1;
-      const w = Math.sin(ph * Math.PI * 2) * (ph < 0.5 ? 1 : 0.65);
-      material.uniforms.uHotShift.value.set(0, w * params.thoughtSwing, 0);
-    }
     if (thought) {
       material.uniforms.uPulse.value = pulseLevel(clock.elapsedTime);
     }
