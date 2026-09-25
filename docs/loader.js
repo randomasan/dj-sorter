@@ -268,6 +268,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     varying float vFace;
     uniform float uThoughtRep;
     // бегущая волна вдоль ребра: голова на конце периода, хвост длиной uDotLength·период
+    float hash(float n) { return fract(sin(n * 12.9898 + 4.1414) * 43758.5453); }
     float wave(float d, float rep) {
       float f = mod(d, rep), L = rep * uDotLength;
       return f < rep - L ? 0.0 : smoothstep(rep - L, rep, f);
@@ -278,7 +279,22 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       //   мысли — голубые сигналы, короче период, своё время uHotTime (быстрее, реагирует на импульсы),
       //           видимость = вес vHot (1 в центре → 0 к краю)
       float sN = wave(vDistance - uTime * uSpeed * 10.0, uDotRepeat * 10.0);
-      float sT = wave(vDistance + 7.3 - uHotTime * uSpeed * 10.0, uDotRepeat * 10.0 * uThoughtRep) * vHot;
+      // мысли — «кванты»: у каждой свой id (номер волны на пути) и по нему свои случайные свойства
+      float dT = vDistance + 7.3 - uHotTime * uSpeed * 10.0;
+      float repT = uDotRepeat * 10.0 * uThoughtRep;
+      float id = floor(dT / repT), f = mod(dT, repT);
+      float h1 = hash(id), h2 = hash(id + 17.1), h3 = hash(id + 31.7), h4 = hash(id + 53.3), h5 = hash(id + 71.9);
+      // длина: от короткой искры до длинного хвоста (чаще короткие)
+      float L = repT * mix(0.05, 0.8, h4 * h4);
+      float sT = f < repT - L ? 0.0 : smoothstep(repT - L, repT, f);
+      // жизнь: свой цикл 1.5–5 ед., рождение (быстрое появление) → жизнь (25–80% цикла) → смерть (угасание)
+      float ph = fract(uHotTime * 0.35 / mix(1.5, 5.0, h2) + h1);
+      float duty = mix(0.25, 0.8, h3);
+      float life = smoothstep(0.0, 0.06, ph) * (1.0 - smoothstep(duty - 0.12, duty, ph));
+      // плотность вероятности с центром: у мысли свой порог h5; жива там, где плотность vHot выше порога.
+      // Уходя к краю, мысль «умирает», заходя в центр — «рождается»
+      float dens = smoothstep(h5 - 0.12, h5 + 0.12, vHot);
+      sT *= life * dens;
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно своего цвета
       vec3 finalColor = mix(colorLine, max(colorDot - uBgRaw, 0.0), sN);
       finalColor = mix(finalColor, max(colorThought - uBgRaw, 0.0) * (1.0 + uPulse * 2.2), sT);   // мысль поверх шума, иногда ярче
