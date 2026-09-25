@@ -34,7 +34,7 @@
   <div id="orb" aria-hidden="true"></div>
 
   <header class="topbar" id="top">
-    <span class="brand">dj<b>/</b>sorter</span>
+    <div class="brand-wrap"><span class="brand">dj<b>/</b>sorter</span><span class="version" id="ver"></span></div>
     <nav><a class="btn btn--tertiary btn--sm" href="nerd_mode.html">nerd_mode</a><button class="btn btn--secondary btn--sm" id="logout" hidden>Выйти</button></nav>
   </header>
 
@@ -75,6 +75,8 @@
     <button class="btn btn--secondary btn--sm" id="more" hidden>Показать ещё</button>
   </main>
 
+<script src="version.js"></script>
+<script>document.getElementById('ver').textContent = (window.APP_VERSION && window.APP_VERSION.label) || '';</script>
 <script src="core.js"></script>
 <script>
 const $ = s => document.querySelector(s);

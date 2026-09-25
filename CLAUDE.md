@@ -11,3 +11,6 @@
 
 ## Деплой
 - GitHub Pages из `main` `/docs`. Пуш через бандл на Mac (git-прокси песочницы блокирует репо).
+
+## Версия
+- `docs/version.js` генерирует git pre-commit хук (копия: `tools/pre-commit.sh` → положить в `.git/hooks/pre-commit`). Номер = число коммитов, показывается под лого на главной.
