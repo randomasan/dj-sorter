@@ -247,7 +247,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   // --- 6a. Слежение за курсором ---
   // target — наклон к курсору, пока мышь двигается; через IDLE мс без движения target = 0.
   // Изинг: экспоненциальное сглаживание, скорость зависит от скорости курсора (быстрее мышь → меньше изинга).
-  const MAX_TILT = 0.55, IDLE = 140, RATE_MIN = 2.2, RATE_MAX = 22, RATE_RETURN = 2.4;
+  const MAX_TILT = 0.38, IDLE = 140, RATE_MIN = 1.6, RATE_MAX = 12, RATE_RETURN = 2.4;
   const aim = { x: 0, y: 0 }, cur = { x: 0, y: 0 };
   let lastMove = -1e9, lastX = 0, lastY = 0, lastT = 0, speed = 0;
   if (follow) addEventListener('pointermove', (e) => {
@@ -266,7 +266,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     const moving = performance.now() - lastMove < IDLE;
     const tx = moving ? aim.x : 0, ty = moving ? aim.y : 0;
     if (!moving) speed *= Math.exp(-dt * 6);
-    const rate = moving ? RATE_MIN + (RATE_MAX - RATE_MIN) * Math.min(1, speed / 2.5) : RATE_RETURN;
+    const rate = moving ? RATE_MIN + (RATE_MAX - RATE_MIN) * Math.min(1, speed / 3.5) : RATE_RETURN;
     const k = 1 - Math.exp(-dt * rate);
     cur.x += (tx - cur.x) * k; cur.y += (ty - cur.y) * k;
     rig.rotation.set(cur.x, cur.y, 0);
