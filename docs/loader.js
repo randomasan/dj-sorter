@@ -7,7 +7,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-export function mountLoader(container, { gui: withGui = true, params: over = {} } = {}) {
+// follow:true — шар зафиксирован фронтально и наклоняется к курсору, пока мышь двигается; остановилась → плавно домой.
+// axes:true — оси XYZ внутри шара (для отладки).
+export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false } = {}) {
   const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
 
   // --- 1. Scene Setup ---
@@ -36,7 +38,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
   scene.fog = new THREE.FogExp2(params.backgroundColor, params.fogDensity);
 
   const camera = new THREE.PerspectiveCamera(60, W() / H(), 0.1, 1000);
-  camera.position.set(0, -1, 30);
+  camera.position.set(0, follow ? 0 : -1, 30);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(W(), H());
@@ -49,6 +51,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
   controls.enableZoom = false;       // колесо мыши скроллит страницу, а не зумит сцену
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.5;
+  if (follow) { controls.autoRotate = false; controls.enabled = false; }
 
   // --- 2. Post Processing (Bloom) ---
   const renderScene = new RenderPass(scene, camera);
@@ -198,15 +201,23 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
   });
 
   let mesh = new THREE.LineSegments(createShapeGeometry(params.shape, params.onlyExternal), material);
-  scene.add(mesh);
+  // rig — то, что наклоняется к курсору: шар + отладочные оси
+  const rig = new THREE.Group();
+  scene.add(rig);
+  rig.add(mesh);
+  if (axes) {
+    const ax = new THREE.AxesHelper(16);            // X красная, Y зелёная, Z синяя
+    ax.material.depthTest = false; ax.material.fog = false; ax.renderOrder = 10;
+    rig.add(ax);
+  }
 
   // --- 5. GUI (свёрнута, в углу визуала) ---
   const gui = new GUI({ title: 'System Core', container });
   gui.domElement.classList.add('viz-gui');
   const rebuildGeo = () => {
-    scene.remove(mesh); mesh.geometry.dispose();
+    rig.remove(mesh); mesh.geometry.dispose();
     mesh = new THREE.LineSegments(createShapeGeometry(params.shape, params.onlyExternal), material);
-    scene.add(mesh);
+    rig.add(mesh);
   };
   const fGeo = gui.addFolder('Geometry');
   fGeo.add(params, 'shape', ['Cube', 'Sphere', 'Pyramid', 'Hexagon', 'Torus']).name('Form Factor').onChange(rebuildGeo);
@@ -233,6 +244,34 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
 
   // --- 6. Animation ---
   // uTime накапливаем сами: смена скорости (boost во время загрузки) идёт плавно, без скачка сигналов
+  // --- 6a. Слежение за курсором ---
+  // target — наклон к курсору, пока мышь двигается; через IDLE мс без движения target = 0.
+  // Изинг: экспоненциальное сглаживание, скорость зависит от скорости курсора (быстрее мышь → меньше изинга).
+  const MAX_TILT = 0.55, IDLE = 140, RATE_MIN = 2.2, RATE_MAX = 22, RATE_RETURN = 2.4;
+  const aim = { x: 0, y: 0 }, cur = { x: 0, y: 0 };
+  let lastMove = -1e9, lastX = 0, lastY = 0, lastT = 0, speed = 0;
+  if (follow) addEventListener('pointermove', (e) => {
+    const r = container.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const nx = Math.max(-1, Math.min(1, (e.clientX - cx) / (innerWidth / 2)));
+    const ny = Math.max(-1, Math.min(1, (e.clientY - cy) / (innerHeight / 2)));
+    aim.y = nx * MAX_TILT;          // курсор вправо → поворот вокруг Y к нему
+    aim.x = ny * MAX_TILT;          // курсор вниз → передняя сторона наклоняется вниз
+    const now = performance.now(), dtm = Math.max(1, now - lastT);
+    const v = Math.hypot(e.clientX - lastX, e.clientY - lastY) / dtm;   // px/мс
+    speed += (Math.min(v, 4) - speed) * 0.35;
+    lastX = e.clientX; lastY = e.clientY; lastT = now; lastMove = now;
+  }, { passive: true });
+  const followStep = (dt) => {
+    const moving = performance.now() - lastMove < IDLE;
+    const tx = moving ? aim.x : 0, ty = moving ? aim.y : 0;
+    if (!moving) speed *= Math.exp(-dt * 6);
+    const rate = moving ? RATE_MIN + (RATE_MAX - RATE_MIN) * Math.min(1, speed / 2.5) : RATE_RETURN;
+    const k = 1 - Math.exp(-dt * rate);
+    cur.x += (tx - cur.x) * k; cur.y += (ty - cur.y) * k;
+    rig.rotation.set(cur.x, cur.y, 0);
+  };
+
   const clock = new THREE.Clock();
   let t = 0, boost = 1, boostTarget = 1, running = true;
   function animate() {
@@ -242,8 +281,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
     boost += (boostTarget - boost) * Math.min(1, dt * 3);
     t += dt * boost;
     material.uniforms.uTime.value = t;
-    controls.autoRotateSpeed = 0.5 * boost;
-    controls.update();
+    if (follow) followStep(dt);
+    else { controls.autoRotateSpeed = 0.5 * boost; controls.update(); }
     if (params.useBloom) composer.render(); else renderer.render(scene, camera);
   }
 
