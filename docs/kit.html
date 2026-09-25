@@ -229,13 +229,14 @@
   <p>Визуал «Trails in Forms» (sabosugi, <code>loader.js</code>) в цветах кита. На главной во время загрузки — <code>setActive(true)</code> (сигналы ×3.5), в конце уменьшается в лого transform'ом без ресайза canvas.</p>
   <div id="orbDemo"></div>
   <div class="row" style="margin-top:12px"><button class="btn btn--primary btn--sm" id="orbOn">setActive(true)</button><button class="btn btn--secondary btn--sm" id="orbOff">setActive(false)</button></div>
-<pre>mountLoader(el, { gui:false, params:{ backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760' } })</pre>
+<pre>mountLoader(el, { gui:false, params:{ backgroundColor:'#121212', lineColor:'#5c5c5c', dotColor:'#1ed760', lineWidth:2, lineAlpha:0.14 } })</pre>
 </section>
 
 <section id="log" style="border:0">
   <h2 class="t-h2">Журнал</h2>
   <p>Каждое изменение кита — строкой сюда (свежие сверху).</p>
   <table class="log">
+    <tr><td>2026-09-25</td><td>Шар: контур толще и заметнее — lineWidth 2 (сдвинутые копии), lineAlpha 0.14, lineColor #5c5c5c. Новые параметры loader.js: lineWidth, lineAlpha.</td></tr>
     <tr><td>2026-09-25</td><td>v1: токены (цвета, радиусы, отступы, типографика, движение), кнопки, чипы и статусы шагов, поиск, прогресс, эквалайзер, метки/key/meter, поверхности, шапка, список треков, тосты, скелетон, анимации, шар. Главная переведена на кит.</td></tr>
   </table>
 </section>
@@ -256,7 +257,7 @@
 <script type="module">
   import { mountLoader } from './loader.js';
   try{
-    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, params:{ backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760' } });
+    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, params:{ backgroundColor:'#121212', lineColor:'#5c5c5c', dotColor:'#1ed760', lineWidth:2, lineAlpha:0.14 } });
     document.getElementById('orbOn').onclick = ()=>o.setActive(true);
     document.getElementById('orbOff').onclick = ()=>o.setActive(false);
   }catch(e){ console.warn('orb', e); }
