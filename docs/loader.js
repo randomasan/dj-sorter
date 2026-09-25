@@ -78,6 +78,11 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     switch (shapeType) {
       case 'Cube': return Math.abs(x) < r && Math.abs(y) < r && Math.abs(z) < r;
       case 'Sphere': return (x*x + y*y + z*z) < (r*r);
+      case 'Cut': {
+        // шар с одной срезанной стороной: плоскость справа-спереди, отступ 6.5 от центра (r=12)
+        if ((x*x + y*y + z*z) >= r*r) return false;
+        return (x * 0.82 + y * 0.18 + z * 0.54) < 6.5;
+      }
       case 'Pac': {
         // сфера лицом к зрителю: неглубокий «рот» спереди (клин ±17° в плоскости YZ, от z>4.5 — не до центра) и два «глаза»
         if ((x*x + y*y + z*z) >= r*r) return false;
@@ -315,7 +320,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     rig.add(mesh);
   };
   const fGeo = gui.addFolder('Geometry');
-  fGeo.add(params, 'shape', ['Cube', 'Sphere', 'Pac', 'Pyramid', 'Hexagon', 'Torus']).name('Form Factor').onChange(rebuildGeo);
+  fGeo.add(params, 'shape', ['Cube', 'Sphere', 'Cut', 'Pac', 'Pyramid', 'Hexagon', 'Torus']).name('Form Factor').onChange(rebuildGeo);
   fGeo.add(params, 'onlyExternal').name('Only External').onChange(rebuildGeo);
   const fColors = gui.addFolder('Colors');
   fColors.addColor(params, 'backgroundColor').name('Background').onChange(val => {

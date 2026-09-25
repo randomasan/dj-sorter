@@ -229,13 +229,14 @@
   <p>Визуал «Trails in Forms» (sabosugi, <code>loader.js</code>) в цветах кита. На главной во время загрузки — <code>setActive(true)</code> (сигналы ×3.5), в конце уменьшается в лого transform'ом без ресайза canvas.</p>
   <div id="orbDemo"></div>
   <div class="row" style="margin-top:12px"><button class="btn btn--primary btn--sm" id="orbOn">setActive(true)</button><button class="btn btn--secondary btn--sm" id="orbOff">setActive(false)</button></div>
-<pre>mountLoader(el, { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Pac', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } })</pre>
+<pre>mountLoader(el, { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Cut', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } })</pre>
 </section>
 
 <section id="log" style="border:0">
   <h2 class="t-h2">Журнал</h2>
   <p>Каждое изменение кита — строкой сюда (свежие сверху).</p>
   <table class="log">
+    <tr><td>2026-09-25</td><td>Шар: форма упрощена до Cut — сфера со срезом одной стороны (плоскость справа-спереди, нормаль (0.82, 0.18, 0.54), отступ 6.5 при r 12). Pac остаётся в GUI nerd_mode.</td></tr>
     <tr><td>2026-09-25</td><td>Шар: подсветку лица убрали (сетка вокруг рта/глаз гуще, но цвет общий). Вернули вращение мышкой (drag, OrbitControls; наклон к курсору на время drag замирает). «Мысль» — в центре, размытая: R 9.5, плотность и цвет плавно спадают от центра.</td></tr>
     <tr><td>2026-09-25</td><td>Шар: контур лица — вокруг рта и глаз отдельная густая сетка цвета --fg-sub (faceColor) с альфой 0.27, чтобы лицо читалось анфас.</td></tr>
     <tr><td>2026-09-25</td><td>Шар: Pac развёрнут лицом к зрителю — рот спереди (+Z), два глаза.</td></tr>
@@ -265,7 +266,7 @@
 <script type="module">
   import { mountLoader } from './loader.js';
   try{
-    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Pac', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } });
+    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Cut', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } });
     document.getElementById('orbOn').onclick = ()=>o.setActive(true);
     document.getElementById('orbOff').onclick = ()=>o.setActive(false);
   }catch(e){ console.warn('orb', e); }
