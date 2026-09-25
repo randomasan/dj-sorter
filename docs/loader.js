@@ -388,7 +388,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
         from, to, prev: null, f: Math.random(), v: Rr(1.2, 3.2),              // скорость по сетке, ед/с
         u: i === 0 ? 1 : 1 - Math.cbrt(Math.random()), th: Math.random() * Math.PI * 2, rho: Math.sqrt(Math.random()),
         flow: Rr(0.06, 0.16),                                                   // течение к вершине внутри конуса
-        s: i === 0 ? 0.55 : Math.pow(Math.random(), 1.4) * 0.7, k: Rr(2.5, 7), a: 0,
+        s: i === 0 ? 0.55 : Math.pow(Math.random(), 1.4) * 0.7, k: Rr(12, 26), a: 0,
         tw: Math.random() * 6.28, tws: Rr(1.5, 4),
         pos: new THREE.Vector3(),
       });
@@ -529,7 +529,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     if (!tCloud) return;
     const moving = performance.now() - lastMove < IDLE && !dragging;
     const Gt = follow && moving && speed > CONE_SPEED ? 1 : 0;
-    G += (Gt - G) * (1 - Math.exp(-dt * (Gt > G ? 2.2 : 0.8)));      // собирается ~1 с, рассыпается ~3 с
+    G += (Gt - G) * (1 - Math.exp(-dt * (Gt > G ? 14 : 3.2)));       // собирается за ~0.2–0.3 с, рассыпается ~1 с
     if (follow && moving) dirW.lerp(aimDir(), 1 - Math.exp(-dt * 6)).normalize();
     rig.getWorldQuaternion(tmpQ).invert();
     dirL.copy(dirW).applyQuaternion(tmpQ);
