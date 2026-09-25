@@ -33,6 +33,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     dotLength: 0.01,
     dotDensity: 1.809,
     thoughtColor: '#4cb3ff',   // цвет сигналов «мысли» (--info из кита)
+    faceColor: '#b3b3b3',      // контур рта и глаз у формы Pac (--fg-sub)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -116,8 +117,17 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   // «мысль»: сфера внутри формы, где сетка гуще (отдельные блуждания) и сигналы помечены aHot=1
   const HOT = { c: new THREE.Vector3(-4, 3, 2), r: 4.6, segments: 900 };
+  // «лицо» Pac: полоса вокруг рта и глаз — там сетка гуще и контур ярче, чтобы лицо читалось анфас
+  const EYES = [[-4, 5.5, 8], [4, 5.5, 8]];
+  const inFaceRim = (p) => {
+    if (!isPointInside(p, 'Pac')) return false;
+    const a = Math.abs(Math.atan2(p.y, p.z));
+    if (p.z > 4.5 && a < 0.62) return true;                                  // губы
+    for (const [ex, ey, ez] of EYES) if (p.distanceTo(new THREE.Vector3(ex, ey, ez)) < 4.4) return true;  // веки
+    return false;
+  };
   function createShapeGeometry(shapeType, onlyExternal) {
-    const positions = [], attributes = [], hot = [];
+    const positions = [], attributes = [], hot = [], face = [];
     const step = 2, maxSegments = 6000;
     let currentPos = new THREE.Vector3(0, 0, 0);
     let currentDist = 0;
@@ -144,7 +154,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       if (isValid) {
         positions.push(currentPos.x, currentPos.y, currentPos.z, nextPos.x, nextPos.y, nextPos.z);
         attributes.push(currentDist, currentDist + step);
-        hot.push(0, 0);
+        hot.push(0, 0); face.push(0, 0);
         currentDist += step;
         currentPos.copy(nextPos);
       } else {
@@ -170,15 +180,38 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
         if (inHot(np)) {
           positions.push(hp.x, hp.y, hp.z, np.x, np.y, np.z);
           attributes.push(currentDist, currentDist + step);
-          hot.push(1, 1);
+          hot.push(1, 1); face.push(0, 0);
           currentDist += step; hp.copy(np);
         } else { currentDist += 30.0; hp = startHot(); }
+      }
+    }
+    if (shapeType === 'Pac') {
+      const startFace = () => {
+        const p = new THREE.Vector3();
+        for (let k = 0; k < 400; k++) {
+          p.set((Math.random()-0.5)*24, (Math.random()-0.5)*24, Math.random()*12);
+          p.x = Math.round(p.x/step)*step; p.y = Math.round(p.y/step)*step; p.z = Math.round(p.z/step)*step;
+          if (inFaceRim(p)) return p;
+        }
+        return null;
+      };
+      let fp = startFace();
+      for (let i = 0; fp && i < 1400; i++) {
+        const d = [[step,0,0],[-step,0,0],[0,step,0],[0,-step,0],[0,0,step],[0,0,-step]][Math.floor(Math.random()*6)];
+        const np = fp.clone().add(new THREE.Vector3(...d));
+        if (inFaceRim(np)) {
+          positions.push(fp.x, fp.y, fp.z, np.x, np.y, np.z);
+          attributes.push(currentDist, currentDist + step);
+          hot.push(0, 0); face.push(1, 1);
+          currentDist += step; fp.copy(np);
+        } else { currentDist += 30.0; fp = startFace(); }
       }
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('lineDistance', new THREE.Float32BufferAttribute(attributes, 1));
     geometry.setAttribute('aHot', new THREE.Float32BufferAttribute(hot, 1));
+    geometry.setAttribute('aFace', new THREE.Float32BufferAttribute(face, 1));
     return geometry;
   }
 
@@ -186,11 +219,14 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   const vertexShader = `
     attribute float lineDistance;
     attribute float aHot;
+    attribute float aFace;
     varying float vDistance;
     varying float vHot;
+    varying float vFace;
     void main() {
       vDistance = lineDistance;
       vHot = aHot;
+      vFace = aFace;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`;
   const fragmentShader = `
@@ -206,10 +242,12 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     uniform bool uUseFog;
     uniform vec3 colorThought;
     uniform float uPulse;       // 0..1 — вспышка «мысли»
+    uniform vec3 colorFace;
     varying float vDistance;
     varying float vHot;
+    varying float vFace;
     void main() {
-      float alpha = mix(0.2, 0.22, vHot);                       // участок «мысли» чуть заметнее
+      float alpha = mix(mix(0.2, 0.22, vHot), 0.27, vFace);    // «мысль» чуть заметнее, контур лица — ещё заметнее
       float rep = uDotRepeat * mix(1.0, 0.38, vHot) * 10.0;     // и сигналов там в ~2.5 раза больше
       float distanceState = vDistance - uTime * uSpeed * 10.0 * mix(1.0, 1.4 + uPulse, vHot);
       float flow = mod(distanceState, rep);
@@ -218,7 +256,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       if (flow < rep - lengthVal) signal = 0.0;
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно colorDot
       vec3 dotC = mix(colorDot, colorThought, vHot);
-      vec3 finalColor = mix(colorLine, max(dotC - uBgRaw, 0.0), signal);
+      vec3 lineC = mix(colorLine, colorFace, vFace);
+      vec3 finalColor = mix(lineC, max(dotC - uBgRaw, 0.0), signal);
       finalColor *= 1.0 + vHot * uPulse * 2.2;                  // иногда ярче
       float finalAlpha = max(alpha, signal);
       gl_FragColor = vec4(finalColor, finalAlpha);
@@ -240,6 +279,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       uBgRaw: { value: new THREE.Color().setStyle(params.backgroundColor, THREE.LinearSRGBColorSpace) },
       colorThought: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) },
       uPulse: { value: 0 },
+      colorFace: { value: new THREE.Color(params.faceColor) },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
