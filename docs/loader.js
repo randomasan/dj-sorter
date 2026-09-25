@@ -7,7 +7,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-export function mountLoader(container, { gui: withGui = true } = {}) {
+export function mountLoader(container, { gui: withGui = true, params: over = {} } = {}) {
   const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
 
   // --- 1. Scene Setup ---
@@ -30,6 +30,7 @@ export function mountLoader(container, { gui: withGui = true } = {}) {
     dotLength: 0.01,
     dotDensity: 1.809,
   };
+  Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
   scene.background = new THREE.Color(params.backgroundColor);
   scene.fog = new THREE.FogExp2(params.backgroundColor, params.fogDensity);

@@ -27,6 +27,8 @@ docs/index.html      — главная: шар + «Feed me» → лоадер �
 docs/nerd_mode.html  — девтул: все шаги, логи, AI-describer, DJ, генератор
 docs/core.js         — общее ядро: Spotify-авторизация, сеть, БД, нормализация, пайплайн (без DOM)
 docs/loader.js       — визуал «Trails in Forms» (three.js)
+docs/kit.css         — UI kit: токены и компоненты публичных страниц
+docs/kit.html        — витрина кита + правила + журнал изменений (/kit.html)
 src/worker.js       — /api/health, /api/features (прокси ReccoBeats), /api/classify (Jev)
 wrangler.jsonc      — конфиг Cloudflare Worker (static assets + AI binding)
 ```
@@ -99,4 +101,5 @@ npx wrangler dev   # http://localhost:8787 (Workers AI вызывается уд
 
 - `/` — главная. Пользователь видит шар, заголовок «feed me» и кнопку **Войти через Spotify**. После авторизации запускается пайплайн: лайки → база → нормализация → BPM и тональность → сохранение. Сигналы в шаре ускоряются, внизу показаны текущий шаг и прогресс-бар. В конце шар плавно (только CSS transform, без ресайза canvas) уменьшается и уезжает вверх, как логотип, и появляется таблица треков с сортировкой и поиском.
 - `/nerd_mode.html` — девтул для отладки и разработки.
+- `/kit.html` — UI kit. Любой новый элемент публичной страницы сначала ищем в ките; если аналога нет — добавляем в `kit.css` + демо в `kit.html` + строку в журнал, потом используем. Подробно в `CLAUDE.md`.
 - Redirect URI в Spotify один — корень сайта. `nerd_mode` при логине запоминает `returnTo`, и корень после авторизации возвращает на неё.

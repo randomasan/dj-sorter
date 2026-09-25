@@ -5,125 +5,74 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>DJ Sorter</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;700;800;900&display=swap">
+<link rel="stylesheet" href="kit.css">
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
 <style>
-  :root{
-    --bg:#141414; --panel:#1b1b1b; --line:#2a2a2a; --wire:#5c5c5c;
-    --fg:#e9e9e9; --mut:#8a8a8a; --sig:#33fff1; --sig-dim:rgba(51,255,241,.14); --err:#ff6b6b;
-    color-scheme: dark;
-  }
-  *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.45 "JetBrains Mono",ui-monospace,Menlo,monospace}
-  a{color:var(--mut)} a:hover{color:var(--sig)}
-
-  /* --- сфера: сначала на весь экран, потом уезжает вверх логотипом --- */
-  /* canvas не ресайзится: едет и сжимается только transform (GPU), поэтому без рывков */
-  #orb{position:fixed;inset:0;z-index:0;transform-origin:50% 50%;will-change:transform;
-       transition:transform 1.6s cubic-bezier(.65,0,.25,1)}
+  /* Только раскладка страницы. Все элементы — из kit.css (см. kit.html). */
+  body{min-height:100%}
+  /* шар: canvas не ресайзится, едет и сжимается только transform (GPU) */
+  #orb{position:fixed;inset:0;z-index:0;transform-origin:50% 50%;will-change:transform;transition:transform var(--t-orb) var(--ease-io)}
   #orb canvas{display:block;width:100%;height:100%}
-  body.logo #orb{transform:translate3d(0,calc(92px + env(safe-area-inset-top,0px) - 50vh),0) scale(var(--orb-s,.18));pointer-events:none}
-  body.logo{overflow:auto}
+  body.logo #orb{transform:translate3d(0,calc(100px + env(safe-area-inset-top,0px) - 50vh),0) scale(var(--orb-s,.18));pointer-events:none}
 
-  /* --- шапка --- */
-  .top{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:calc(14px + env(safe-area-inset-top,0px)) 18px 14px;z-index:3;font-size:12px;letter-spacing:.06em}
-  .word{font-family:Unbounded,system-ui,sans-serif;font-weight:700;letter-spacing:.02em;color:var(--fg)}
-  .word b{color:var(--sig)}
-  .top nav{display:flex;gap:16px}
+  #hero{position:fixed;inset:auto 0 calc(11vh + env(safe-area-inset-bottom,0px)) 0;z-index:2;gap:var(--sp-5)}
+  #prog{position:fixed;left:50%;bottom:calc(9vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(520px,calc(100vw - 32px));z-index:2}
+  #prog .now{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-3)}
+  #prog .now b{display:inline-flex;align-items:center;gap:10px;font-size:16px}
+  #steps{justify-content:center;margin-top:var(--sp-4);gap:var(--sp-2)}
+  #pNote{min-height:1.4em;margin-top:var(--sp-2);text-align:center}
 
-  /* --- стартовый экран --- */
-  #hero{position:fixed;inset:auto 0 calc(12vh + env(safe-area-inset-bottom,0px)) 0;display:flex;flex-direction:column;align-items:center;gap:14px;z-index:2;transition:opacity .5s}
-  #hero h1{font-family:Unbounded,system-ui,sans-serif;font-weight:700;font-size:clamp(34px,7vw,64px);letter-spacing:.01em;line-height:1;margin:0 0 6px;text-transform:lowercase}
-  #feed{display:inline-flex;align-items:center;gap:12px;font:700 16px/1 system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;letter-spacing:.01em;
-        color:#000;background:#1DB954;border:0;border-radius:999px;padding:15px 30px 15px 22px;cursor:pointer;transition:transform .15s,background .2s}
-  #feed svg{width:24px;height:24px;flex:none}
-  #feed:hover{background:#1ed760;transform:scale(1.04)}
-  #feed:active{transform:scale(.98)}
-  #feed:focus-visible{outline:2px solid var(--fg);outline-offset:4px}
-  #heroErr{color:var(--err);font-size:12px;text-align:center;max-width:40ch}
-
-  /* --- прогресс внизу --- */
-  #prog{position:fixed;left:50%;bottom:calc(9vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(520px,calc(100vw - 32px));z-index:2;transition:opacity .5s}
-  #prog .now{display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:13px}
-  #prog .now b{font-weight:600}
-  #prog .cnt{color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap}
-  .bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden}
-  .bar i{display:block;height:100%;width:0;background:var(--sig);box-shadow:0 0 10px var(--sig);transition:width .3s}
-  #steps{display:flex;gap:6px;justify-content:center;margin-top:12px;flex-wrap:wrap}
-  #steps span{font-size:11px;color:var(--mut);padding:3px 8px;border:1px solid var(--line);border-radius:999px}
-  #steps span.run{color:var(--sig);border-color:var(--sig)}
-  #steps span.done{color:var(--fg);border-color:var(--wire)}
-  #steps span.err{color:var(--err);border-color:var(--err)}
-  #steps span.skip{color:var(--wire)}
-  #prog .note{color:var(--mut);font-size:11px;margin-top:8px;min-height:1.2em;text-align:center}
-  #prog .again{display:block;margin:10px auto 0;background:none;border:1px solid var(--sig);color:var(--sig);border-radius:999px;padding:6px 16px;font:inherit;cursor:pointer}
-
-  /* --- библиотека --- */
-  #lib{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:calc(200px + env(safe-area-inset-top,0px)) 16px 60px;opacity:0;transition:opacity .8s .4s}
+  #lib{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:calc(200px + env(safe-area-inset-top,0px)) var(--sp-4) var(--sp-7);opacity:0;transition:opacity .8s .5s}
   body.logo #lib{opacity:1}
-  .libhead{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between;margin-bottom:14px}
-  .libhead h2{font-family:Unbounded,system-ui,sans-serif;font-weight:500;font-size:20px;margin:0}
-  .libhead h2 small{color:var(--mut);font-family:"JetBrains Mono",monospace;font-size:12px;margin-left:8px;font-weight:400}
-  #q{background:var(--panel);border:1px solid var(--line);color:var(--fg);font:inherit;border-radius:8px;padding:8px 12px;min-width:0;width:min(320px,100%)}
-  #q:focus{outline:none;border-color:var(--sig)}
-  .tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:rgba(27,27,27,.85);backdrop-filter:blur(6px)}
-  table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
-  th,td{padding:9px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
-  th{position:sticky;top:0;background:var(--panel);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);cursor:pointer;user-select:none}
-  th:hover{color:var(--fg)} th.on{color:var(--sig)} th.on::after{content:' ↓'} th.on.asc::after{content:' ↑'}
-  td.t{max-width:340px;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
-  td.a{max-width:220px;overflow:hidden;text-overflow:ellipsis;color:#bdbdbd}
-  td.n,td.m{color:var(--mut)}
-  .cam{display:inline-block;min-width:3.2em;color:var(--sig)}
-  .en{display:inline-block;width:56px;height:4px;background:var(--line);border-radius:2px;vertical-align:middle;overflow:hidden}
-  .en i{display:block;height:100%;background:var(--sig)}
-  tr:hover td{background:rgba(51,255,241,.04)}
-  .more{display:block;margin:14px auto 0;background:none;border:1px solid var(--line);color:var(--mut);border-radius:999px;padding:6px 16px;font:inherit;cursor:pointer}
-  .more:hover{border-color:var(--sig);color:var(--sig)}
-  @media (max-width:640px){ .hide-s{display:none} td.t{max-width:180px} td.a{max-width:120px} }
-  @media (prefers-reduced-motion: reduce){ #orb,#lib,#hero,#prog{transition:none} }
-  [hidden]{display:none!important}
+  .libhead{display:flex;flex-wrap:wrap;gap:var(--sp-4);align-items:flex-end;justify-content:space-between;margin-bottom:var(--sp-4)}
+  #sorts{margin-bottom:var(--sp-4)}
+  #more{display:flex;margin:var(--sp-5) auto 0}
 </style>
 </head>
 <body>
   <div id="orb" aria-hidden="true"></div>
 
-  <header class="top">
-    <span class="word">dj<b>/</b>sorter</span>
-    <nav><a href="nerd_mode.html">nerd_mode</a><a href="#" id="logout" hidden>выйти</a></nav>
+  <header class="topbar" id="top">
+    <span class="brand">dj<b>/</b>sorter</span>
+    <nav><a class="btn btn--tertiary btn--sm" href="nerd_mode.html">nerd_mode</a><button class="btn btn--secondary btn--sm" id="logout" hidden>Выйти</button></nav>
   </header>
 
-  <section id="hero">
-    <h1>feed me</h1>
-    <button id="feed" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#000"/><path d="M17.5 16.3a.75.75 0 0 1-1 .25c-2.8-1.7-6.3-2.1-10.4-1.2a.75.75 0 1 1-.33-1.46c4.5-1 8.4-.6 11.5 1.4.35.2.46.66.24 1.01zm1.47-3.27a.94.94 0 0 1-1.29.31c-3.2-1.97-8.1-2.54-11.9-1.39a.94.94 0 0 1-.54-1.8c4.3-1.3 9.7-.67 13.4 1.6.44.27.58.85.31 1.28zm.13-3.4C15.26 7.35 8.9 7.14 5.2 8.26a1.12 1.12 0 1 1-.65-2.15c4.24-1.29 11.3-1.04 15.7 1.6a1.12 1.12 0 0 1-1.15 1.93z" fill="#1DB954"/></svg>Войти через Spotify</button>
-    <div id="heroErr" hidden></div>
+  <section id="hero" class="center">
+    <h1 class="t-display a-in">feed me</h1>
+    <button id="feed" class="btn btn--primary btn--lg a-in a-in-d1" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0a12 12 0 1 0 0 24 12 12 0 0 0 0-24zm5.5 17.3a.75.75 0 0 1-1 .25c-2.8-1.7-6.3-2.1-10.4-1.2a.75.75 0 1 1-.33-1.46c4.5-1 8.4-.6 11.5 1.4.35.2.46.66.24 1.01zm1.47-3.27a.94.94 0 0 1-1.29.31c-3.2-1.97-8.1-2.54-11.9-1.39a.94.94 0 0 1-.54-1.8c4.3-1.3 9.7-.67 13.4 1.6.44.27.58.85.31 1.28zm.13-3.4C15.26 8.35 8.9 8.14 5.2 9.26a1.12 1.12 0 1 1-.65-2.15c4.24-1.29 11.3-1.04 15.7 1.6a1.12 1.12 0 0 1-1.15 1.93z"/></svg>Войти через Spotify</button>
+    <div id="heroErr" class="t-err" hidden></div>
   </section>
 
   <section id="prog" hidden aria-live="polite">
-    <div class="now"><b id="pLabel">…</b><span class="cnt" id="pCnt"></span></div>
-    <div class="bar"><i id="pBar"></i></div>
-    <div id="steps"></div>
-    <div class="note" id="pNote"></div>
+    <div class="now"><b><span class="eq" id="pEq"><i></i><i></i><i></i><i></i></span><span id="pLabel">…</span></b><span class="t-sub t-sm num" id="pCnt"></span></div>
+    <div class="progress is-accent"><i id="pBar"></i></div>
+    <div id="steps" class="row"></div>
+    <div class="t-sub t-sm" id="pNote"></div>
   </section>
 
   <main id="lib" hidden>
     <div class="libhead">
-      <h2>Твоя библиотека <small id="libStat"></small></h2>
-      <input id="q" type="search" placeholder="поиск: трек, артист, 124, 8A…" autocomplete="off">
+      <div>
+        <div class="t-eyebrow">Лайки Spotify</div>
+        <h2 class="t-h1">Твоя библиотека</h2>
+        <div class="t-sub t-sm" id="libStat"></div>
+      </div>
+      <label class="field"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.8 4.8-1.4 1.4-4.8-4.8A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></svg><input id="q" type="search" placeholder="Трек, артист, 124, 8A…" autocomplete="off"></label>
     </div>
-    <div class="tbl"><table>
+    <div id="sorts" class="row row--scroll"></div>
+    <div class="tracks-scroll"><table class="tracks">
       <thead><tr>
-        <th data-k="n" class="hide-s">#</th>
-        <th data-k="name">Трек</th>
-        <th data-k="artist">Артист</th>
+        <th data-k="n" class="c-n hide-s">#</th>
+        <th data-k="name">Название</th>
         <th data-k="bpm">BPM</th>
         <th data-k="key">Key</th>
         <th data-k="energy" class="hide-s">Energy</th>
-        <th data-k="added" class="hide-s">Лайк</th>
+        <th data-k="added" class="hide-s">Добавлено</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
-    <button class="more" id="more" hidden>показать ещё</button>
+    <button class="btn btn--secondary btn--sm" id="more" hidden>Показать ещё</button>
   </main>
 
 <script src="core.js"></script>
@@ -137,7 +86,7 @@ const STEPS = [
   ['save', 'Сохраняю',                  'сохранение'],
 ];
 const ST = {}; STEPS.forEach(([k,l])=>ST[k]={label:l,status:'wait',done:0,total:0,note:''});
-$('#steps').innerHTML = STEPS.map(([k,,chip])=>`<span id="s-${k}">${chip}</span>`).join('');
+$('#steps').innerHTML = STEPS.map(([k,,chip])=>`<span class="chip chip--sm wait" id="s-${k}">${chip}</span>`).join('');
 let CUR = null;
 function onStep(k, p){
   Object.assign(ST[k], p);
@@ -147,10 +96,10 @@ function onStep(k, p){
   $('#pCnt').textContent = s.total ? `${s.done.toLocaleString()} / ${s.total.toLocaleString()}` : '';
   $('#pBar').style.width = s.total ? `${Math.round(100*Math.min(s.done,s.total)/s.total)}%` : '0%';
   $('#pNote').textContent = s.note || '';
-  STEPS.forEach(([key])=>{ $('#s-'+key).className = ST[key].status; });
+  STEPS.forEach(([key])=>{ $('#s-'+key).className = 'chip chip--sm ' + ST[key].status; });
 }
 
-function setLoading(on){ window.ORB?.setActive(on); }
+function setLoading(on){ window.ORB?.setActive(on); $('#pEq').classList.toggle('is-paused', !on); }
 
 async function start(){
   $('#hero').hidden = true; $('#prog').hidden = false; $('#logout').hidden = false;
@@ -165,7 +114,7 @@ async function start(){
     setLoading(false);
     $('#pLabel').textContent = 'Что-то пошло не так';
     $('#pNote').textContent = e.message;
-    const b = document.createElement('button'); b.className='again'; b.textContent='ещё раз';
+    const b = document.createElement('button'); b.className='btn btn--secondary btn--sm'; b.style.cssText='display:flex;margin:16px auto 0'; b.textContent='Ещё раз';
     b.onclick = ()=>{ b.remove(); start(); };
     $('#prog').appendChild(b);
     if(!DJ.loggedIn()){ $('#prog').hidden=true; $('#hero').hidden=false; showErr(e.message); }
@@ -182,7 +131,7 @@ const val = {
 // куда уменьшается шар: центр на 92px от верха, диаметр ~120px.
 // Сфера r=12 на дистанции 30 при fov 60 занимает ≈69% высоты канваса.
 function orbTarget(){
-  document.getElementById('orb').style.setProperty('--orb-s', (120 / (0.69 * innerHeight)).toFixed(4));
+  document.getElementById('orb').style.setProperty('--orb-s', (112 / (0.69 * innerHeight)).toFixed(4));
 }
 addEventListener('resize', orbTarget);
 function showLibrary(tracks){
@@ -202,28 +151,31 @@ function render(){
   $('#rows').innerHTML = VIEW.slice(0,LIMIT).map(t=>{
     const c = DJ.camelot(t.key,t.mode), e = t.energyAudio;
     return `<tr>
-      <td class="n hide-s">${t._n}</td>
-      <td class="t" title="${esc(t.name)}">${esc(t.name)}</td>
-      <td class="a" title="${esc(t.artists.join(', '))}">${esc(t.artists.join(', '))}</td>
-      <td>${t.bpm??'<span class="m">—</span>'}</td>
-      <td>${c?`<span class="cam">${DJ.camStr(c)}</span> <span class="m">${DJ.keyName(t)}</span>`:'<span class="m">—</span>'}</td>
-      <td class="hide-s">${e!=null?`<span class="en"><i style="width:${Math.round(e*100)}%"></i></span>`:'<span class="m">—</span>'}</td>
-      <td class="m hide-s">${(t.added||'').slice(0,10)}</td>
+      <td class="c-n hide-s">${t._n}</td>
+      <td class="c-title"><b title="${esc(t.name)}">${esc(t.name)}</b><span title="${esc(t.artists.join(', '))}">${esc(t.artists.join(', '))}</span></td>
+      <td>${t.bpm!=null?`<span style="color:var(--fg)">${t.bpm}</span>`:'<span class="dash">—</span>'}</td>
+      <td>${c?`<span class="key"><b>${DJ.camStr(c)}</b><span>${DJ.keyName(t)}</span></span>`:'<span class="dash">—</span>'}</td>
+      <td class="hide-s">${e!=null?`<span class="meter${e>=.7?' is-hi':''}"><i style="width:${Math.round(e*100)}%"></i></span>`:'<span class="dash">—</span>'}</td>
+      <td class="hide-s">${(t.added||'').slice(0,10)}</td>
     </tr>`;
   }).join('');
   $('#more').hidden = VIEW.length <= LIMIT;
-  document.querySelectorAll('th').forEach(th=>{ th.classList.toggle('on', th.dataset.k===SORT.k); th.classList.toggle('asc', th.dataset.k===SORT.k && SORT.asc); });
+  document.querySelectorAll('th').forEach(th=>{ th.classList.toggle('is-sorted', th.dataset.k===SORT.k); th.classList.toggle('is-asc', th.dataset.k===SORT.k && SORT.asc); });
+  document.querySelectorAll('#sorts .chip').forEach(ch=>ch.classList.toggle('is-active', ch.dataset.k===SORT.k));
 }
-document.querySelectorAll('th').forEach(th=>th.onclick=()=>{
-  const k=th.dataset.k; SORT = SORT.k===k ? {k, asc:!SORT.asc} : {k, asc: ['name','artist','n'].includes(k)}; LIMIT=200; render();
-});
+const setSort = k => { SORT = SORT.k===k ? {k, asc:!SORT.asc} : {k, asc: ['name','artist','n'].includes(k)}; LIMIT=200; render(); };
+document.querySelectorAll('th').forEach(th=>th.onclick=()=>setSort(th.dataset.k));
+$('#sorts').innerHTML = [['added','Недавние'],['bpm','BPM'],['key','Тональность'],['energy','Энергия'],['artist','Артист']]
+  .map(([k,l])=>`<button class="chip" data-k="${k}">${l}</button>`).join('');
+document.querySelectorAll('#sorts .chip').forEach(ch=>ch.onclick=()=>setSort(ch.dataset.k));
 $('#q').addEventListener('input', ()=>{ LIMIT=200; render(); });
 $('#more').onclick = ()=>{ LIMIT += 300; render(); };
 
 /* ---------- старт ---------- */
 function showErr(m){ const el=$('#heroErr'); el.textContent=m; el.hidden=!m; }
 $('#feed').onclick = () => DJ.login();
-$('#logout').onclick = e => { e.preventDefault(); DJ.logout(); location.reload(); };
+$('#logout').onclick = () => { DJ.logout(); location.reload(); };
+addEventListener('scroll', ()=>$('#top').classList.toggle('is-solid', scrollY > 140), {passive:true});
 (async()=>{
   try{
     await DJ.handleCallback();          // вернулись из Spotify (или ушли на returnTo)
@@ -233,7 +185,7 @@ $('#logout').onclick = e => { e.preventDefault(); DJ.logout(); location.reload()
 </script>
 <script type="module">
   import { mountLoader } from './loader.js';
-  try { window.ORB = mountLoader(document.getElementById('orb'), { gui:false }); } catch(e){ console.warn('orb', e); }
+  try { window.ORB = mountLoader(document.getElementById('orb'), { gui:false, params:{ backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760' } }); } catch(e){ console.warn('orb', e); }
 </script>
 </body>
 </html>
