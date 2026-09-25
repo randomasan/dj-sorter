@@ -229,13 +229,14 @@
   <p>Визуал «Trails in Forms» (sabosugi, <code>loader.js</code>) в цветах кита. На главной во время загрузки — <code>setActive(true)</code> (сигналы ×3.5), в конце уменьшается в лого transform'ом без ресайза canvas.</p>
   <div id="orbDemo"></div>
   <div class="row" style="margin-top:12px"><button class="btn btn--primary btn--sm" id="orbOn">setActive(true)</button><button class="btn btn--secondary btn--sm" id="orbOff">setActive(false)</button></div>
-<pre>mountLoader(el, { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } })</pre>
+<pre>mountLoader(el, { gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } })</pre>
 </section>
 
 <section id="log" style="border:0">
   <h2 class="t-h2">Журнал</h2>
   <p>Каждое изменение кита — строкой сюда (свежие сверху).</p>
   <table class="log">
+    <tr><td>2026-09-25</td><td>Отладочные оси XYZ скрыты (axes:false).</td></tr>
     <tr><td>2026-09-25</td><td>Плотность рёбер: общая сетка 9000 рёбер вместо 6000 (параметр segments).</td></tr>
     <tr><td>2026-09-25</td><td>Стики-поинты ориентации: 25 точек наклона в передней полусфере (центр + кольца 0.09/0.2/0.33 рад по 6/8/10 точек). После остановки курсора шар возвращается в ближайшую к текущему наклону, а не в (0,0).</td></tr>
     <tr><td>2026-09-25</td><td>Курсор тормозит мысли: скорость курсора &gt; 0.35 px/мс (после мёртвой зоны 6px) → время мыслей ×0.04 за ~0.3 с; остановка (180 мс) → разгон обратно за ~0.5 с. Шум не тормозится.</td></tr>
@@ -280,7 +281,7 @@
 <script type="module">
   import { mountLoader } from './loader.js';
   try{
-    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } });
+    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } });
     document.getElementById('orbOn').onclick = ()=>o.setActive(true);
     document.getElementById('orbOff').onclick = ()=>o.setActive(false);
   }catch(e){ console.warn('orb', e); }
