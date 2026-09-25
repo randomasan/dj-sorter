@@ -29,8 +29,6 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
     speed: 0.1,
     dotLength: 0.01,
     dotDensity: 1.809,
-    lineWidth: 1,      // толщина контура в CSS px (WebGL рисует линии в 1px — толщину набираем сдвинутыми копиями)
-    lineAlpha: 0.2,    // базовая видимость контура (в оригинале пена 0.2)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -144,13 +142,10 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
   // --- 4. Shader ---
   const vertexShader = `
     attribute float lineDistance;
-    uniform vec2 uOffset;   // сдвиг копии в пикселях буфера
-    uniform vec2 uRes;
     varying float vDistance;
     void main() {
       vDistance = lineDistance;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      gl_Position.xy += uOffset * 2.0 / uRes * gl_Position.w;
     }`;
   const fragmentShader = `
     uniform vec3 colorLine;
@@ -162,10 +157,9 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
     uniform vec3 uFogColor;
     uniform float uFogDensity;
     uniform bool uUseFog;
-    uniform float uLineAlpha;
     varying float vDistance;
     void main() {
-      float alpha = uLineAlpha;
+      float alpha = 0.2;
       float distanceState = vDistance - uTime * uSpeed * 10.0;
       float flow = mod(distanceState, uDotRepeat * 10.0);
       float lengthVal = (uDotRepeat * 10.0) * uDotLength;
@@ -182,7 +176,9 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
       }
     }`;
 
-  const shared = {
+  const material = new THREE.ShaderMaterial({
+    vertexShader, fragmentShader,
+    uniforms: {
       colorLine: { value: new THREE.Color(params.lineColor) },
       colorDot: { value: new THREE.Color(params.dotColor) },
       uTime: { value: 0 },
@@ -192,40 +188,19 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
       uFogColor: { value: new THREE.Color(params.backgroundColor) },
       uFogDensity: { value: params.fogDensity },
       uUseFog: { value: params.useFog },
-      uLineAlpha: { value: params.lineAlpha },
-      uRes: { value: new THREE.Vector2(1, 1) },
-  };
-  renderer.getDrawingBufferSize(shared.uRes.value);
-  const material = { uniforms: shared };   // совместимость: material.uniforms.* как в оригинале
-  // Копии со сдвигом на 0..lineWidth-1 px по диагоналям → линия толщиной lineWidth
-  const offsets = () => {
-    const n = Math.max(1, Math.round(params.lineWidth)), d = Math.min(window.devicePixelRatio, 2), o = [];
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) o.push([(i - (n-1)/2) * d, (j - (n-1)/2) * d]);
-    return o;
-  };
-  const makeMesh = (geo) => {
-    const g = new THREE.Group();
-    for (const [x, y] of offsets()) {
-      const m = new THREE.ShaderMaterial({
-        vertexShader, fragmentShader,
-        uniforms: { ...shared, uOffset: { value: new THREE.Vector2(x, y) } },
-        transparent: true, depthTest: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-      });
-      g.add(new THREE.LineSegments(geo, m));
-    }
-    g.geometry = geo;
-    return g;
-  };
+    },
+    transparent: true, depthTest: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
 
-  let mesh = makeMesh(createShapeGeometry(params.shape, params.onlyExternal));
+  let mesh = new THREE.LineSegments(createShapeGeometry(params.shape, params.onlyExternal), material);
   scene.add(mesh);
 
   // --- 5. GUI (свёрнута, в углу визуала) ---
   const gui = new GUI({ title: 'System Core', container });
   gui.domElement.classList.add('viz-gui');
   const rebuildGeo = () => {
-    scene.remove(mesh); mesh.geometry.dispose(); mesh.children.forEach(c => c.material.dispose());
-    mesh = makeMesh(createShapeGeometry(params.shape, params.onlyExternal));
+    scene.remove(mesh); mesh.geometry.dispose();
+    mesh = new THREE.LineSegments(createShapeGeometry(params.shape, params.onlyExternal), material);
     scene.add(mesh);
   };
   const fGeo = gui.addFolder('Geometry');
@@ -272,7 +247,6 @@ export function mountLoader(container, { gui: withGui = true, params: over = {} 
     camera.updateProjectionMatrix();
     renderer.setSize(W(), H());
     composer.setSize(W(), H());
-    renderer.getDrawingBufferSize(shared.uRes.value);
   };
   new ResizeObserver(resize).observe(container);
   document.addEventListener('visibilitychange', () => {
