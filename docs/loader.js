@@ -509,7 +509,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   // --- 7a. Динамика облака ---
   const CONE_SPEED = 1.1;          // px/мс: быстрее — мысли собираются в конус к курсору
-  let G = 0;
+  let G = 0, lastFast = -1e9;
+  const HOLD = 4000;               // мс покоя курсора до начала распада конуса
   const dirW = new THREE.Vector3(0, 0, 1), dirL = new THREE.Vector3(0, 0, 1), tmpQ = new THREE.Quaternion();
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), tv = new THREE.Vector3(), tw = new THREE.Vector3();
   const perpA = new THREE.Vector3(), perpB = new THREE.Vector3(), cp = new THREE.Vector3(), wp = new THREE.Vector3();
@@ -528,8 +529,10 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   function stepCloud(dt, now, pulse) {
     if (!tCloud) return;
     const moving = performance.now() - lastMove < IDLE && !dragging;
-    const Gt = follow && moving && speed > CONE_SPEED ? 1 : 0;
-    G += (Gt - G) * (1 - Math.exp(-dt * (Gt > G ? 14 : 3.2)));       // собирается за ~0.2–0.3 с, рассыпается ~1 с
+    if (follow && moving && speed > CONE_SPEED) lastFast = performance.now();
+    const Gt = performance.now() - lastFast < HOLD ? 1 : 0;
+    if (Gt > G) G = Gt;                                                // собирается мгновенно
+    else G += (Gt - G) * (1 - Math.exp(-dt * 3.2));                    // через 4 с покоя рассыпается ~1 с
     if (follow && moving) dirW.lerp(aimDir(), 1 - Math.exp(-dt * 6)).normalize();
     rig.getWorldQuaternion(tmpQ).invert();
     dirL.copy(dirW).applyQuaternion(tmpQ);
@@ -546,7 +549,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       wp.lerpVectors(q.from.p, q.to.p, q.f);
       // в конус
       const at = Math.min(1, Math.max(0, (G - q.s) / (1 - q.s)));
-      q.a += (at - q.a) * (1 - Math.exp(-dt * q.k));
+      if (at > q.a) q.a = at; else q.a += (at - q.a) * (1 - Math.exp(-dt * q.k));   // в конус — сразу, обратно — плавно
       const e = q.a * q.a * (3 - 2 * q.a); sumE += e;
       if (i > 0 && G > 0.05) { q.u += q.flow * dt * G; if (q.u > 1) q.u -= 1; }   // мысли стекают к вершине
       const along = -CONE.back + q.u * CONE.len, rad = CONE.rBase * (1 - q.u) * q.rho;
