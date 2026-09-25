@@ -7,7 +7,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-export function mountLoader(container) {
+export function mountLoader(container, { gui: withGui = true } = {}) {
   const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
 
   // --- 1. Scene Setup ---
@@ -223,6 +223,7 @@ export function mountLoader(container) {
   fRender.add(params, 'bloomStrength', 0.0, 3.0).name('Bloom Strength').onChange(val => bloomPass.strength = val);
   fRender.add(params, 'bloomRadius', 0.0, 1.0).name('Bloom Radius').onChange(val => bloomPass.radius = val);
   gui.close();
+  if (!withGui) gui.domElement.style.display = 'none';
 
   // --- 6. Animation ---
   // uTime накапливаем сами: смена скорости (boost во время загрузки) идёт плавно, без скачка сигналов

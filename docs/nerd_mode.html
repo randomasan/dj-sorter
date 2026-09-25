@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DJ Sorter · nerd_mode</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<style>
+  :root{--bg:#f3f5f2;--fg:#15181c;--mut:#5d6570;--acc:#138a3e;--acc-fg:#fff;--line:#d5dad6;--card:#fff;--warn:#fff4d6;--warn-fg:#6b4e00}
+  @media (prefers-color-scheme: dark){:root{--bg:#0f1115;--fg:#e8e8ea;--mut:#8a8f98;--acc:#1db954;--acc-fg:#000;--line:#23262d;--card:#161920;--warn:#2a2410;--warn-fg:#e6c56a;color-scheme:dark}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  main{max-width:1000px;margin:0 auto;padding:16px}
+  h1{font-size:18px;margin:0 0 12px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+  button,select,input,textarea{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+  button{cursor:pointer} button.pri{background:var(--acc);color:var(--acc-fg);border-color:var(--acc);font-weight:600}
+  button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+  button:disabled{opacity:.4;cursor:default}
+  input{min-width:0;flex:1 1 220px} textarea{width:100%;min-height:90px;resize:vertical}
+  .mut{color:var(--mut)} .tabs button.on{border-color:var(--acc);color:var(--acc)}
+  #status{white-space:pre-wrap;color:var(--mut);min-height:1.4em;margin-bottom:8px}
+  .note{background:var(--warn);color:var(--warn-fg);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;margin:0;white-space:pre;font-variant-numeric:tabular-nums}
+  details{margin-bottom:10px} summary{cursor:pointer;color:var(--mut)}
+  #pipe{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+  .step{padding:6px 0;border-top:1px solid var(--line)} .step:first-child{border-top:0}
+  .sh{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+  .sh .cnt{margin-left:auto;font-variant-numeric:tabular-nums}
+  .ic{width:1em;display:inline-block;text-align:center}
+  .step.run .ic{color:var(--acc);animation:spin 1s linear infinite} .step.done .ic{color:var(--acc)}
+  .step.paused .ic,.step.paused .nt{color:var(--warn-fg)} .step.err .ic,.step.err .nt{color:#d9534f} .step.skip{opacity:.55}
+  .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:4px 0}
+  .bar i{display:block;height:100%;background:var(--acc);transition:width .3s}
+  .step.paused .bar i{background:var(--warn-fg)}
+  .viz{position:relative;height:300px;margin:-12px -12px 12px;border-radius:8px 8px 0 0;overflow:hidden;background:#141414}
+  .vizHost{position:absolute;inset:0}
+  .viz canvas{display:block;width:100%;height:100%}
+  .viz .lil-gui.root{position:absolute;top:8px;right:8px;--background-color:#1a1a1a;--text-color:#eee;--font-family:inherit;z-index:2}
+  .vizCap{position:absolute;left:12px;bottom:10px;right:12px;color:#33fff1;font-size:11px;letter-spacing:.04em;text-shadow:0 0 8px rgba(51,255,241,.5);pointer-events:none}
+  .grp{border-top:1px dashed var(--line);margin-top:10px}
+  #aiLog,#dbgLog{max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:6px}
+  .sm{font-size:11px} button.sm{padding:2px 8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion: reduce){.step.run .ic{animation:none}}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>🎧 DJ Sorter <span class="mut">— nerd_mode</span> <a href="./" class="mut sm" style="margin-left:8px">← на главную</a></h1>
+
+  <details id="setup">
+    <summary>⚙️ Настройки</summary>
+    <div class="row" style="margin-top:8px">
+      <input id="clientId" placeholder="Spotify Client ID">
+      <button id="saveCfg">Save</button>
+    </div>
+    <div class="mut">Redirect URI для Spotify Dashboard: <b id="redir"></b></div>
+    <div class="mut" id="backendInfo"></div>
+  </details>
+
+  <div class="row">
+    <button class="pri" id="login">Connect Spotify</button>
+    <button id="demo">Demo data</button>
+    <button id="reload" disabled>Refetch library</button>
+    <button id="reclassify" disabled>Re-classify (Jev)</button>
+    <button id="logout">Logout</button>
+  </div>
+  <div id="status"></div>
+  <section id="pipe" hidden>
+    <div class="viz"><div id="loaderViz" class="vizHost"></div><div class="vizCap" id="vizCap"></div></div>
+    <div class="row" style="justify-content:space-between;margin-bottom:6px">
+      <b>Данные</b><span class="mut sm" id="pipeNet"></span><button id="pipeToggle" class="sm">свернуть</button>
+    </div>
+    <div id="pipeRows"></div>
+    <div id="normGrp" class="grp">
+      <div class="row" style="margin:14px 0 6px"><b>Нормализация</b></div>
+      <div id="normRows"></div>
+    </div>
+    <details id="dbgWrap" class="grp"><summary class="sm" style="margin-top:10px">лог загрузки (отладка) <button id="dbgCopy" class="sm" type="button">📋 копировать всё</button></summary><pre id="dbgLog" class="sm">—</pre></details>
+    <div id="aiGrp" class="grp">
+      <div class="row" style="justify-content:space-between;margin:14px 0 6px">
+        <b>AI-describer</b>
+        <span class="row" style="margin:0;gap:6px">
+          <button id="aiRun10" class="sm">▶ 10</button><button id="aiRun50" class="sm">▶ 50</button><button id="aiRunAll" class="sm">▶ все</button><button id="aiStop" class="sm" disabled>⏹ стоп</button>
+        </span>
+      </div>
+      <div id="aiRows"></div>
+      <details id="aiLogWrap"><summary class="sm">лог описаний <button id="aiLogCopy" class="sm" type="button">📋 копировать</button></summary><pre id="aiLog">пока пусто</pre></details>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <div class="row tabs">
+      <button data-tab="lib" class="on">📚 Library</button>
+      <button data-tab="dj">🎛 DJ</button>
+      <button data-tab="gen">🎹 Generator</button>
+    </div>
+
+    <section id="tab-lib">
+      <div class="row">
+        <span class="mut">Sort:</span>
+        <select id="sortBy">          <option value="bpm">BPM</option>
+
+          <option value="key">Тональность (Camelot)</option>
+          <option value="energy">Энергия (Jev)</option>
+          <option value="mood">Mood (Jev)</option>
+          <option value="slot">Слот в сете (Jev)</option>
+          <option value="artist">Артист</option>
+          <option value="added">Дата лайка</option>
+        </select>
+        <label class="mut"><input type="checkbox" id="group" checked style="flex:0"> группировать</label>
+        <input id="q" placeholder="filter…" style="flex:0 1 180px">
+      </div>
+      <pre id="list"></pre>
+    </section>
+
+    <section id="tab-dj" hidden>
+      <div class="row">
+        <button class="pri" id="renew">🔄 Renew</button>
+        <span class="mut">длина</span>
+        <select id="setLen"><option>10</option><option selected>20</option><option>30</option><option>50</option></select>
+        <span class="mut">BPM ±</span>
+        <select id="bpmTol"><option>4</option><option selected>8</option><option>12</option></select>
+        <label class="mut"><input type="checkbox" id="curve" checked style="flex:0"> кривая энергии</label>
+      </div>
+      <pre id="set"></pre>
+    </section>
+
+    <section id="tab-gen" hidden>
+      <div class="note">🚧 Генератор музыки — в разработке. Модель и пайплайн подключим следующим шагом.</div>
+      <div class="row">
+        <button id="seedFromSet">Взять контекст из DJ-сета</button>
+        <span class="mut">(BPM, тональность, жанр, mood, энергия последних треков)</span>
+      </div>
+      <textarea id="genPrompt" placeholder="Промпт для генерации…"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="pri" id="generate" disabled>Generate</button>
+        <span class="mut">скоро</span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+/* ================= config ================= */
+const LS = {
+  get:(k,d=null)=>{try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},
+  set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},
+  del:(k)=>{try{localStorage.removeItem(k)}catch{}},
+};
+const DEFAULT_CLIENT_ID = '38e72ce3403d4c508bbca5a7d1996798';
+// redirect всегда на корень (он зарегистрирован в Spotify); корень вернёт сюда по 'returnTo'
+const REDIRECT = location.origin + location.pathname.replace(/[^/]*$/, '');
+if(!LS.get('cfg.clientId')) LS.set('cfg.clientId', DEFAULT_CLIENT_ID);
+const SCOPES = 'user-library-read';
+const $ = s => document.querySelector(s);
+const status = t => { $('#status').textContent = t; if(typeof dbg==='function') dbg('status: '+t); };
+let BACKEND = false; // есть ли наш Worker (/api)
+$('#redir').textContent = REDIRECT;
+$('#clientId').value = LS.get('cfg.clientId','');
+['cfg.lastfmKey','cache.genres','cache.genres.v2','cache.styles'].forEach(LS.del); // жанры/стили выпилены
+if(!LS.get('cfg.clientId')) $('#setup').open = true;
+$('#saveCfg').onclick = () => { LS.set('cfg.clientId',$('#clientId').value.trim()); status('Saved ✔'); };
+
+async function detectBackend(){
+  try{ const r = await fetch('api/health'); const j = await r.json(); BACKEND = !!j.ok; }
+  catch{ BACKEND = false; }
+  $('#backendInfo').textContent = BACKEND ? 'Backend: ✔ Worker (ReccoBeats proxy + Jev)' : 'Backend: ✖ нет Worker — Jev выключен, ReccoBeats напрямую';
+}
+
+/* ================= music theory ================= */
+const CAM_MAJ = [8,3,10,5,12,7,2,9,4,11,6,1];
+const CAM_MIN = [5,12,7,2,9,4,11,6,1,8,3,10];
+const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function camelot(key, mode){
+  if(key==null || key<0 || mode==null) return null;
+  return { n: mode ? CAM_MAJ[key] : CAM_MIN[key], l: mode ? 'B' : 'A' };
+}
+const camStr = c => c ? `${c.n}${c.l}` : '—';
+const keyName = t => t.key==null||t.key<0 ? '' : NOTES[t.key] + (t.mode ? '' : 'm');
+// 0 perfect · 1 harmonic (±1 / relative) · 2 energy boost (+2) · 3 unknown · 9 clash
+function keyDist(a, b){
+  if(!a || !b) return 3;
+  const d = Math.min((a.n-b.n+12)%12, (b.n-a.n+12)%12);
+  if(a.l===b.l){ if(d===0) return 0; if(d===1) return 1; if(d===2) return 2; return 9; }
+  return d===0 ? 1 : 9;
+}
+function bpmDiff(a, b){
+  if(!a || !b) return 20;
+  return Math.min(Math.abs(a-b), Math.abs(a*2-b), Math.abs(a-b*2));
+}
+
+/* ================= spotify PKCE ================= */
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+function randStr(n=64){ const a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a).slice(0,n); }
+async function login(){
+  const cid = LS.get('cfg.clientId');
+  if(!cid){ $('#setup').open=true; return status('Сначала вставь Spotify Client ID в настройках ⚙️'); }
+  const verifier = randStr(64);
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  LS.set('pkce.verifier', verifier); LS.set('returnTo', 'nerd_mode.html');
+  const p = new URLSearchParams({client_id:cid,response_type:'code',redirect_uri:REDIRECT,scope:SCOPES,code_challenge_method:'S256',code_challenge:challenge});
+  location.href = 'https://accounts.spotify.com/authorize?' + p;
+}
+async function tokenReq(body){
+  const r = await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body)});
+  const j = await r.json(); if(!r.ok) throw new Error('token: '+(j.error_description||j.error));
+  LS.set('tok',{access:j.access_token, refresh:j.refresh_token||LS.get('tok',{}).refresh, exp:Date.now()+(j.expires_in-60)*1000});
+}
+async function handleCallback(){
+  const p = new URLSearchParams(location.search);
+  if(p.get('error')) status('Spotify auth error: '+p.get('error'));
+  if(!p.get('code')) return;
+  await tokenReq({client_id:LS.get('cfg.clientId'),grant_type:'authorization_code',code:p.get('code'),redirect_uri:REDIRECT,code_verifier:LS.get('pkce.verifier')});
+  history.replaceState(null,'',REDIRECT);
+}
+async function accessToken(){
+  const t = LS.get('tok'); if(!t) return null;
+  if(Date.now() < t.exp) return t.access;
+  await tokenReq({client_id:LS.get('cfg.clientId'),grant_type:'refresh_token',refresh_token:t.refresh});
+  return LS.get('tok').access;
+}
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+/* ================= debug log ================= */
+const DBG = [];
+function dbg(msg){ const ts=new Date().toISOString().slice(11,19); DBG.push(`${ts} ${msg}`); if(DBG.length>2000) DBG.shift();
+  const el=document.getElementById('dbgLog'); if(el) el.textContent = DBG.slice(-400).join('\n'); }
+function dbgHeader(){
+  return [`DJ Sorter debug · ${new Date().toISOString()}`, `url: ${location.href}`, `ua: ${navigator.userAgent}`,
+    `tracks: ${LIB.length} · isrc: ${LIB.filter(t=>t.isrc).length} · bpm: ${LIB.filter(t=>t.bpm).length} · ai: ${LIB.filter(t=>t.ai).length}`,
+    `net: req ${NET.req} · 429 ${NET.r429} · err ${NET.errors}`, `db: ${DB_ON()?SB_URL:'off'} · sync: ${SB_FN} · describe: ${SB_DESCRIBE_FN||'off'}`, ''].join('\n');
+}
+async function copyText(text, btn){
+  const done = ok => { if(!btn) return; const o=btn.textContent; btn.textContent = ok?'✔ скопировано':'выдели и Cmd+C'; setTimeout(()=>btn.textContent=o,1500); };
+  try{ await navigator.clipboard.writeText(text); done(true); }
+  catch{ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
+    let ok=false; try{ ok=document.execCommand('copy'); }catch{} ta.remove(); done(ok); }
+}
+
+/* ================= net: rate-limit aware ================= */
+const NET = { req:0, r429:0, errors:0 };
+class RateLimited extends Error { constructor(wait){ super('rate limited'); this.wait=wait; } }
+// общий «шлагбаум»: при 429 на паузу встают ВСЕ воркеры, а не каждый сам по себе
+const GATE = { until:0 };
+async function gate(){ const w = GATE.until - Date.now(); if(w>0) await sleep(w); }
+async function sp(url, {maxWait=60000} = {}){
+  let backoff = 2000;
+  for(let i=0;i<6;i++){
+    await gate();
+    NET.req++;
+    const r = await fetch(url.startsWith('http')?url:'https://api.spotify.com/v1'+url,{headers:{Authorization:'Bearer '+await accessToken()}});
+    if(r.status===429){
+      NET.r429++;
+      const ra = +r.headers.get('Retry-After'); // может быть не виден из-за CORS
+      const wait = ra ? ra*1000 : backoff; backoff = Math.min(backoff*2, 30000);
+      if(wait > maxWait) throw new RateLimited(wait);
+      GATE.until = Date.now() + wait;
+      PIPE.note(`⏸ Spotify rate limit, жду ${Math.ceil(wait/1000)}s`); dbg(`spotify 429 on ${url} · retry-after ${ra||'n/a'} · wait ${wait}ms`);
+      continue;
+    }
+    if(!r.ok){ NET.errors++; dbg(`spotify ${r.status} on ${url}`); throw new Error(`Spotify ${r.status} on ${url}`); }
+    return r.json();
+  }
+  throw new RateLimited(backoff);
+}
+
+/* ================= normalization (IDs + names) ================= */
+// Версии/мусор в названиях: вырезаем из title_clean, а тип версии кладём отдельно
+const VERSION_RX = [
+  [/\b(remix|rmx|rework|re-?edit|bootleg|flip|vip)\b/i, 'remix'],
+  [/\bextended\b/i, 'extended'],
+  [/\b(radio|single|club|original|short|album)\s+(edit|mix|version)\b|\bedit\b/i, 'edit'],
+  [/\blive\b|\bunplugged\b|\bsession\b/i, 'live'],
+  [/\bremaster(ed)?\b/i, 'remaster'],
+  [/\bmixed\b|\bdj mix\b/i, 'mixed'],
+  [/\bacoustic\b/i, 'acoustic'],
+  [/\binstrumental\b/i, 'instrumental'],
+  [/\bversion\b|\bmix\b/i, 'version'],
+];
+function parseTitle(raw){
+  let title = String(raw||''); const tags=[]; const feat=[];
+  // (feat. X) / [ft. X] / feat. X в конце
+  title = title.replace(/[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+([^\)\]]+)[\)\]]/gi,(_,a)=>{feat.push(...a.split(/,|&| and /i).map(s=>s.trim()).filter(Boolean)); return '';});
+  title = title.replace(/\s+(?:feat\.?|ft\.?|featuring)\s+(.+)$/i,(_,a)=>{feat.push(...a.split(/,|&| and /i).map(s=>s.trim()).filter(Boolean)); return '';});
+  // хвосты " - Radio Edit", " - Remastered 2011", " - Live from …"
+  title = title.replace(/\s+[-–—]\s+(.+)$/,(m,tail)=>{ if(VERSION_RX.some(([rx])=>rx.test(tail))||/\b(19|20)\d\d\b/.test(tail)){ tags.push(tail.trim()); return ''; } return m; });
+  // скобки с версиями "(Extended Mix)", "[Remastered]", "(aka ...)"
+  title = title.replace(/\s*[\(\[]([^\)\]]+)[\)\]]/g,(m,inner)=>{ if(VERSION_RX.some(([rx])=>rx.test(inner))||/^aka\b|\b(19|20)\d\d\b/i.test(inner)){ tags.push(inner.trim()); return ''; } return m; });
+  title = title.replace(/\s{2,}/g,' ').trim();
+  let version=null; for(const tag of tags){ for(const [rx,v] of VERSION_RX){ if(rx.test(tag)){ version=v; break; } } if(version) break; }
+  return {title_clean: title || String(raw||'').trim(), version, version_tag: tags.join('; ')||null, feat};
+}
+// Транслит: только как дополнительные варианты для поиска, не как «истина»
+const CYR2LAT = {а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'kh',ц:'ts',ч:'ch',ш:'sh',щ:'shch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya'};
+const LAT2CYR = [['shch','щ'],['iy','ий'],['yy','ый'],['sch','щ'],['yo','ё'],['yu','ю'],['ya','я'],['zh','ж'],['kh','х'],['ts','ц'],['ch','ч'],['sh','ш'],['a','а'],['b','б'],['c','к'],['d','д'],['e','е'],['f','ф'],['g','г'],['h','х'],['i','и'],['j','й'],['k','к'],['l','л'],['m','м'],['n','н'],['o','о'],['p','п'],['q','к'],['r','р'],['s','с'],['t','т'],['u','у'],['v','в'],['w','в'],['x','кс'],['y','ы'],['z','з']];
+const keepCase = (src,out) => src[0]===src[0].toUpperCase() ? out.charAt(0).toUpperCase()+out.slice(1) : out;
+function cyr2lat(s){ return s.replace(/[А-яЁё]+/g,w=>keepCase(w,[...w.toLowerCase()].map(c=>CYR2LAT[c]??c).join(''))); }
+function lat2cyr(s){ return s.replace(/[A-Za-z]+/g,w=>{ let x=w.toLowerCase(),o=''; while(x){ const p=LAT2CYR.find(([l])=>x.startsWith(l)); if(p){o+=p[1];x=x.slice(p[0].length);} else {o+=x[0];x=x.slice(1);} } return keepCase(w,o); }); }
+const deaccent = s => s.normalize('NFKD').replace(/[̀-ͯ]/g,'').replace(/ø/g,'o').replace(/Ø/g,'O').replace(/æ/g,'ae').replace(/ß/g,'ss');
+const hasCyr = s => /[А-яЁё]/.test(s), hasLat = s => /[A-Za-z]/.test(s);
+function artistVariants(a, title=''){
+  const v = new Set([a]);
+  const d = deaccent(a); v.add(d);
+  if(hasCyr(a)) v.add(cyr2lat(a));
+  // латинское имя + кириллическое название = почти наверняка транслит русскоязычного артиста (Auktyon — «Дорога»)
+  else if(hasLat(a) && hasCyr(title)) v.add(lat2cyr(d));
+  return [...v];
+}
+function normalizeTrack(t){
+  const p = parseTitle(t.name);
+  const prev = t.names || {};
+  t.names = {
+    orig_title: t.name, orig_artists: t.artists,
+    title_clean: p.title_clean, version: p.version, version_tag: p.version_tag, feat: p.feat,
+    artist_variants: artistVariants(t.artists[0]||'', t.name),
+    aliases: prev.aliases || [], // {src, artist, title} — как трек называется в других сервисах (пишет describe)
+    v: 1,
+  };
+  return t.names;
+}
+// Шаг 1: ID. ISRC приходит в том же ответе /me/tracks, отдельных запросов не нужно.
+async function stepIds(tracks){
+  const miss = tracks.filter(t=>!('isrc' in t));
+  NP.start('ids',{total:tracks.length, done:tracks.length-miss.length});
+  if(miss.length){
+    const byId = Object.fromEntries(tracks.map(t=>[t.id,t]));
+    let url='/me/tracks?limit=50', seen=0;
+    while(url){
+      const j = await sp(url);
+      for(const it of j.items){ const t=byId[it.track?.id]; if(!t) continue; t.isrc = it.track.external_ids?.isrc||null; t.dur = it.track.duration_ms||null; }
+      seen += j.items.length; NP.set('ids',{done:Math.min(tracks.length, tracks.length-miss.length+seen)});
+      url = j.next;
+    }
+    tracks.forEach(t=>{ if(!('isrc' in t)) t.isrc=null; });
+  }
+  const n = tracks.filter(t=>t.isrc).length;
+  NP.finish('ids', 'done', `${miss.length?`дотянуто для ${miss.length} · `:'пришли вместе с лайками · '}ISRC есть у ${n} из ${tracks.length}${n<tracks.length?` · без ISRC: ${tracks.length-n} (локальные файлы/подкасты/редкие релизы)`:''}`);
+}
+// Шаг 2: имена — локально, мгновенно
+function stepNames(tracks){
+  NP.start('names',{total:tracks.length, done:0});
+  let changed=0, withVer=0, withFeat=0, translit=0;
+  tracks.forEach((t,i)=>{ const n=normalizeTrack(t);
+    if(n.title_clean!==t.name) changed++; if(n.version) withVer++; if(n.feat.length) withFeat++; if(n.artist_variants.some(v=>hasCyr(v)!==hasCyr(t.artists[0]||''))) translit++; });
+  NP.set('names',{done:tracks.length});
+  NP.finish('names','done',`почищено названий: ${changed} · версии: ${withVer} · feat: ${withFeat} · транслит-варианты артиста: ${translit}`);
+}
+const NP = {
+  steps: [
+    {key:'ids',   label:'Фетчинг ID',          src:'Spotify · external_ids.isrc',   what:'ISRC — код записи, одинаковый во всех сервисах'},
+    {key:'names', label:'Нормализация названий', src:'локально',                    what:'чистое название, версия, feat, варианты имени артиста; оригинал сохраняется'},
+  ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
+  get(k){ return this.steps.find(s=>s.key===k); },
+  set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
+  start(k,patch={}){ this.set(k,{status:'run',t0:Date.now(),note:'',...patch}); },
+  finish(k,status='done',note=''){ const s=this.get(k); this.set(k,{status,t1:Date.now(),note}); dbg(`[norm:${k}] ${status} · ${s.done}/${s.total??'-'} ${note}`); },
+  render(){ $('#normRows').innerHTML = renderSteps(this.steps); },
+};
+
+/* ================= DB (Supabase) ================= */
+// Публичные значения (Project URL + publishable/anon key). Пусто → работаем без БД, только localStorage.
+const SB_URL = 'https://vnmdnmvogwxqloaxbenk.supabase.co';
+const SB_KEY = 'sb_publishable_gMOOPy8pKjgJKaOAc-1uaQ_2MzRIg9Y';
+const SB_FN  = 'super-handler';
+const SB_DESCRIBE_FN = 'dynamic-api'; // slug Edge Function `describe` (Deezer превью → Gemini) // slug Edge Function `sync` (URL задаётся слагом, не именем)
+const DB_ON = () => !!(SB_URL && SB_KEY);
+async function sb(path, {method='GET', body, prefer}={}){
+  NET.req++;
+  const headers = {apikey:SB_KEY,'content-type':'application/json'};
+  if(prefer) headers.Prefer = prefer;
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`,{method,headers,body:body?JSON.stringify(body):undefined});
+  if(!r.ok){ NET.errors++; const tx=(await r.text()).slice(0,300); dbg(`db ${method} ${path.slice(0,80)} → ${r.status} ${tx}`); throw new Error(`DB ${r.status}: ${tx.slice(0,140)}`); }
+  return method==='GET' ? r.json() : null;
+}
+const chunks = (a,n) => Array.from({length:Math.ceil(a.length/n)},(_,i)=>a.slice(i*n,i*n+n));
+const toRow = t => ({
+  spotify_id:t.id, name:t.name, artists:t.artists, artist_ids:t.artistIds,
+  bpm:t.bpm??null, musical_key:t.key??null, mode:t.mode??null, energy:t.energyAudio??null,
+  features_checked:!!t.featChecked, jev:t.jev??null,
+  isrc:t.isrc??null, names:t.names??null,
+  updated_at:new Date().toISOString(),
+});
+// Берём из БД всё, что уже кто-то спарсил, и раскладываем по локальным кэшам → внешние API спрашиваем только про недостающее
+async function stepDbPull(tracks){
+  if(!DB_ON()) return PIPE.finish('db','skip','БД не подключена');
+  PIPE.start('db',{total:tracks.length, done:0});
+  const feat=LS.get('cache.feat',{}), jev=LS.get('cache.jev',{});
+  const byId = Object.fromEntries(tracks.map(t=>[t.id,t]));
+  let hits=0, seen=0;
+  for(const ids of chunks(tracks.map(t=>t.id),100)){
+    const rows = await sb(`tracks?select=*&spotify_id=in.(${ids.join(',')})`);
+    for(const r of rows){
+      const t = byId[r.spotify_id]; if(!t) continue; hits++;
+      if(r.features_checked) feat[r.spotify_id] = r.bpm!=null ? {bpm:r.bpm,key:r.musical_key,mode:r.mode,energyAudio:r.energy} : null;
+      if(r.jev && !jev[r.spotify_id]) jev[r.spotify_id] = r.jev;
+      if(r.ai) t.ai = r.ai;
+      if(r.isrc && !t.isrc) t.isrc = r.isrc;
+      if(r.names?.aliases?.length) t.names = {...(t.names||{}), aliases: r.names.aliases};
+    }
+    seen += ids.length;
+    PIPE.set('db',{done:seen, note:`найдено в базе: ${hits}`});
+  }
+  LS.set('cache.feat',feat); LS.set('cache.jev',jev);
+  // сразу раскладываем по трекам, чтобы dbPush не затёр известное null-ами
+  tracks.forEach(t=>{ if(jev[t.id]) t.jev=jev[t.id]; });
+  PIPE.finish('db','done',`найдено в базе: ${hits} из ${tracks.length}`);
+}
+// Запись — только через Edge Function `sync`: она проверяет Spotify-токен и пишет service-ключом.
+async function sbSync(payload){
+  NET.req++;
+  const r = await fetch(`${SB_URL}/functions/v1/${SB_FN}`,{method:'POST',
+    headers:{apikey:SB_KEY,'content-type':'application/json','x-spotify-token':await accessToken()},
+    body:JSON.stringify(payload)});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok){ NET.errors++; dbg(`sync → ${r.status} ${JSON.stringify(j).slice(0,300)}`); throw new Error(`sync ${r.status}: ${j.error||''}`); }
+  return j;
+}
+async function dbPush(tracks){
+  if(!DB_ON()) return;
+  try{
+    let saved=0;
+    for(const part of chunks(tracks.map(toRow),500)) saved += (await sbSync({tracks:part})).saved||0;
+    PIPE.set('db',{note:`сохранено в базу: ${saved}`});
+  }catch(e){ PIPE.set('db',{status:'err',note:e.message}); }
+}
+async function dbUpsertUser(tracks){
+  if(!DB_ON()) return;
+  try{ const j = await sbSync({liked_ids:tracks.map(t=>t.id)}); LS.set('me',{id:j.user,name:j.display_name}); }
+  catch(e){ console.warn('user upsert',e); }
+}
+
+/* ================= pipeline + loader ================= */
+// Шаги: что тянем и откуда. total/done заполняются по ходу.
+const ICON = {wait:'○',run:'◐',done:'●',skip:'–',paused:'⏸',err:'✖'};
+function renderSteps(steps){
+  return steps.map(s=>{
+    const tot = s.total, pct = tot ? Math.round(100*Math.min(s.done,tot)/tot) : (s.status==='done'?100:0);
+    const count = tot!=null ? `${s.done.toLocaleString()} / ${tot.toLocaleString()}` : (s.status==='wait'||s.status==='skip'?'—':'…');
+    const secs = s.t0 ? ((s.t1||Date.now())-s.t0)/1000 : 0;
+    const eta = s.status==='run' && tot && s.done>0 ? ` · ~${Math.max(1,Math.round(secs/s.done*(tot-s.done)))}s` : '';
+    return `<div class="step ${s.status}">
+      <div class="sh"><span class="ic">${ICON[s.status]}</span><b>${s.label}</b><span class="mut src">${s.src}</span><span class="cnt">${count}${eta}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="mut sm">${s.what}${s.cached?` · из кэша ${s.cached.toLocaleString()}`:''}${s.note?` · <span class="nt">${s.note}</span>`:''}</div>
+    </div>`;
+  }).join('');
+}
+const PIPE = {
+  steps: [
+    {key:'likes',  label:'Лайкнутые треки',          src:'Spotify · /me/tracks',            what:'название, артисты, дата лайка'},
+    {key:'db',     label:'База треков',              src:'Supabase · tracks / users',       what:'общий кэш: берём уже спарсенное, сохраняем новое'},
+    {key:'feat',   label:'BPM · тональность · energy', src:'ReccoBeats · /audio-features',  what:'tempo, key, mode, energy'},
+    {key:'jev',    label:'Разметка Jev',             src:'Jev · Cloudflare Worker',         what:'mood, энергия, слот, вокал'},
+  ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
+  get(k){ return this.steps.find(s=>s.key===k); },
+  set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
+  cur:null,
+  note(t){ if(this.cur) this.set(this.cur,{note:t}); },
+  start(k,patch={}){ this.cur=k; this.set(k,{status:'run',t0:Date.now(),note:'',...patch}); },
+  finish(k,status='done',note=''){ const s=this.get(k); this.set(k,{status,t1:Date.now(),note}); this.cur=null; dbg(`[${k}] ${status} · ${s.done}/${s.total??'-'} · ${s.t0?((Date.now()-s.t0)/1000).toFixed(1)+'s':''} ${note}`); },
+  render(){
+    $('#pipe').hidden = false;
+    $('#pipeRows').innerHTML = renderSteps(this.steps);
+    $('#pipeNet').textContent = `запросов: ${NET.req} · 429: ${NET.r429} · ошибок: ${NET.errors}`;
+  },
+};
+let PIPE_RUNNING = false;
+
+async function stepLikes(total){
+  PIPE.start('likes',{total, done:0});
+  const out=[]; let url='/me/tracks?limit=50';
+  while(url){
+    const j = await sp(url);
+    for(const it of j.items){ const t=it.track; if(!t||!t.id) continue;
+      out.push({id:t.id,name:t.name,artists:t.artists.map(a=>a.name),artistIds:t.artists.map(a=>a.id),added:it.added_at,isrc:t.external_ids?.isrc||null,dur:t.duration_ms||null}); }
+    PIPE.set('likes',{done:out.length});
+    url = j.next;
+  }
+  PIPE.finish('likes');
+  return out;
+}
+async function stepFeatures(tracks){
+  const cache = LS.get('cache.feat',{});
+  const todo = tracks.filter(t=>!(t.id in cache)).map(t=>t.id);
+  PIPE.start('feat',{total:tracks.length, done:tracks.length-todo.length, cached:tracks.length-todo.length});
+  let fails=0;
+  for(let i=0;i<todo.length;i+=40){
+    const ids = todo.slice(i,i+40);
+    try{
+      const base = BACKEND ? 'api/features?ids=' : 'https://api.reccobeats.com/v1/audio-features?ids=';
+      NET.req++;
+      const r = await fetch(base+ids.join(','));
+      if(r.status===429){ NET.r429++; PIPE.note('⏸ ReccoBeats rate limit, жду 5s'); await sleep(5000); i-=40; continue; }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const j = await r.json();
+      for(const f of (j.content||[])){
+        const sid = (f.href||'').split('/track/')[1]?.split('?')[0];
+        if(sid) cache[sid] = {bpm:f.tempo?Math.round(f.tempo):null,key:f.key??null,mode:f.mode??null,energyAudio:f.energy??null};
+      }
+      ids.forEach(id=>{ if(!(id in cache)) cache[id]=null; }); // нет в базе ReccoBeats → не спрашиваем снова
+    }catch(e){ NET.errors++; fails++; PIPE.note('ошибка ReccoBeats: '+e.message); if(fails>=3){ break; } }
+    PIPE.set('feat',{done:Math.min(tracks.length, tracks.length-todo.length+i+40)});
+    if(i%400===0) LS.set('cache.feat',cache);
+  }
+  LS.set('cache.feat',cache);
+  tracks.forEach(t=>{ Object.assign(t, cache[t.id]||{}); t.featChecked = t.id in cache; });
+  const found = tracks.filter(t=>t.bpm).length;
+  PIPE.finish('feat', fails>=3?'err':'done', `найдено BPM: ${found}`);
+}
+const jevState = t => `Track: "${t.name}" by ${t.artists.join(', ')}.` +
+  (t.bpm ? ` Tempo: ${t.bpm} bpm.` : '');
+async function classifyJev(tracks, force=false){
+  if(!BACKEND){ tracks.forEach(t=>{ t.jev = LS.get('cache.jev',{})[t.id]||null; }); return PIPE.finish('jev','skip','нет бэкенда (GitHub Pages) — подключим позже'); }
+  const cache = force ? {} : LS.get('cache.jev',{});
+  const todo = tracks.filter(t=>!cache[t.id]);
+  PIPE.start('jev',{total:tracks.length, done:tracks.length-todo.length, cached:tracks.length-todo.length});
+  for(let i=0;i<todo.length;i+=20){
+    const batch = todo.slice(i,i+20).map(t=>({id:t.id,text:jevState(t)}));
+    try{
+      NET.req++;
+      const r = await fetch('api/classify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tracks:batch})});
+      const j = await r.json();
+      for(const x of (j.results||[])) if(!x.error) cache[x.id]={mood:x.mood,mc:x.mc,energy:x.energy,slot:x.slot,vocal:x.vocal};
+    }catch(e){ NET.errors++; }
+    PIPE.set('jev',{done:Math.min(tracks.length, tracks.length-todo.length+i+20)});
+    LS.set('cache.jev',cache);
+  }
+  tracks.forEach(t=>{ t.jev = cache[t.id]||null; });
+  PIPE.finish('jev');
+}
+
+// Весь пайплайн. Показываем библиотеку сразу после лайков, дальше дообогащаем.
+async function runPipeline({refetchLikes=false}={}){
+  if(PIPE_RUNNING) return; PIPE_RUNNING = true;
+  $('#reload').disabled = true;
+  PIPE.steps.forEach(s=>Object.assign(s,{status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0}));
+  NP.steps.forEach(s=>Object.assign(s,{status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})); NP.render();
+  try{
+    let tracks = LS.get('lib');
+    if(!tracks || refetchLikes){
+      // 1) сначала узнаём объём — и сразу показываем пользователю план
+      const head = await sp('/me/tracks?limit=1');
+      const total = head.total;
+      PIPE.set('likes',{total, note:`~${Math.ceil(total/50)} запросов`});
+      PIPE.set('feat',{total, note:`~${Math.ceil(total/40)} запросов`});
+      status(`В библиотеке ${total.toLocaleString()} лайков. Тяну…`);
+      tracks = await stepLikes(total);
+      LS.set('lib', tracks);
+    } else {
+      PIPE.set('likes',{status:'done',total:tracks.length,done:tracks.length,cached:tracks.length,note:'Refetch — перетянуть лайки'});
+    }
+    showApp(tracks);
+    dbUpsertUser(tracks); // фоном
+    await stepDbPull(tracks);
+    await stepIds(tracks); stepNames(tracks); LS.set('lib',tracks); await dbPush(tracks);
+    await stepFeatures(tracks); LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
+    await classifyJev(tracks);  LS.set('lib',tracks); showApp(tracks); await dbPush(tracks);
+    status(`Готово: ${tracks.length.toLocaleString()} треков`);
+  }catch(e){
+    if(PIPE.cur) PIPE.finish(PIPE.cur,'err',e.message);
+    status('Ошибка: '+e.message); console.error(e);
+  }finally{ PIPE_RUNNING=false; $('#reload').disabled=false; PIPE.render(); }
+}
+
+/* ================= demo ================= */
+function demoLibrary(){
+  const G=[['deep house',['deep','soulful'],'groovy',1.6,'warmup'],['tech house',['groovy','minimal'],'groovy',2.6,'build'],['techno',['dark','industrial'],'dark',3.4,'peak'],
+           ['melodic techno',['progressive','emotional'],'melancholic',2.8,'build'],['disco',['nu disco','funk'],'euphoric',2.4,'warmup'],['drum and bass',['liquid','jungle'],'euphoric',3.6,'peak'],['hip hop / r&b',['boom bap','jazz rap'],'chill',1.8,'cooldown']];
+  const B={ 'deep house':[118,124],'tech house':[124,128],'techno':[128,138],'melodic techno':[120,126],'disco':[110,122],'drum and bass':[170,176],'hip hop / r&b':[86,96] };
+  let s=42; const rnd=()=>((s=s*16807%2147483647)/2147483647);
+  return Array.from({length:60},(_,i)=>{ const [g,st,mood,e,slot]=G[Math.floor(rnd()*G.length)]; const [lo,hi]=B[g];
+    return {id:'demo'+i,name:`Track ${String(i+1).padStart(2,'0')}`,artists:[`Artist ${String.fromCharCode(65+i%20)}`],artistIds:['a'+i%20],
+      added:new Date(Date.now()-i*864e5*3).toISOString(),bpm:Math.round(lo+rnd()*(hi-lo)),key:Math.floor(rnd()*12),mode:rnd()>.4?0:1,
+      jev:{mc:+(0.4+rnd()*0.6).toFixed(2),mood,energy:Math.max(0,Math.min(4,+(e+rnd()-0.5).toFixed(2))),slot,vocal:+rnd().toFixed(2)}}; });
+}
+
+/* ================= helpers ================= */
+let LIB=[];
+const energyOf = t => t.jev?.energy ?? (t.energyAudio!=null ? t.energyAudio*4 : null); // 0..4
+const unsure = t => t.jev && t.jev.mc!=null && t.jev.mc<0.5 ? '?' : ' ';
+function line(t){
+  const c = camStr(camelot(t.key,t.mode));
+  const e = energyOf(t);
+  const jev = t.jev ? `${unsure(t)}${t.jev.mood||''} · E${e!=null?e.toFixed(1):'?'}${t.jev.vocal>0.6?' · vox':''}` : '';
+  return `${t.ai?'🔬':'  '}${String(t.bpm??'—').padStart(3)} bpm  ${c.padStart(3)} ${keyName(t).padEnd(3)}  ${t.artists.join(', ')} — ${t.name}${jev?`   [${jev}]`:''}`;
+}
+const byBpm = (a,b)=>(a.bpm??999)-(b.bpm??999);
+const SLOT_ORDER = {warmup:0,build:1,peak:2,cooldown:3};
+const SORTS = {
+  key:    [t=>camStr(camelot(t.key,t.mode)), (a,b)=>{const x=camelot(a.key,a.mode),y=camelot(b.key,b.mode); return (x?x.n:99)-(y?y.n:99)||(x?.l||'').localeCompare(y?.l||'')||byBpm(a,b);}],
+  bpm:    [t=>t.bpm?`${Math.floor(t.bpm/10)*10}–${Math.floor(t.bpm/10)*10+9}`:'— no bpm', byBpm],
+  energy: [t=>{const e=energyOf(t); return e==null?'— no energy':`E${Math.round(e)}`;}, (a,b)=>(energyOf(b)??-1)-(energyOf(a)??-1)],
+  mood:   [t=>t.jev?.mood||'— no mood', (a,b)=>(a.jev?.mood||'~').localeCompare(b.jev?.mood||'~')||byBpm(a,b)],
+  slot:   [t=>t.jev?.slot||'— no slot', (a,b)=>(SLOT_ORDER[a.jev?.slot]??9)-(SLOT_ORDER[b.jev?.slot]??9)||byBpm(a,b)],
+  artist: [t=>t.artists[0], (a,b)=>a.artists[0].localeCompare(b.artists[0])],
+  added:  [t=>t.added?.slice(0,7)||'', (a,b)=>(b.added||'').localeCompare(a.added||'')],
+};
+function renderList(){
+  const [grp,cmp] = SORTS[$('#sortBy').value];
+  const q = $('#q').value.toLowerCase();
+  const arr = LIB.filter(t=>!q || line(t).toLowerCase().includes(q)).sort(cmp);
+  let out=[], last=null;
+  for(const t of arr){
+    if($('#group').checked){ const g=grp(t); if(g!==last){ out.push((out.length?'\n':'')+`## ${g}`); last=g; } }
+    out.push(line(t));
+  }
+  const withF = LIB.filter(t=>t.bpm).length, withJ = LIB.filter(t=>t.jev).length;
+  $('#list').textContent = `${arr.length} tracks · BPM/key ${withF}/${LIB.length} · Jev ${withJ}/${LIB.length}  (? = Jev не уверен)\n\n` + out.join('\n');
+}
+
+/* ================= DJ engine ================= */
+// целевая энергия по позиции: разогрев → пик на ~70% → спад
+const targetEnergy = p => p < 0.7 ? 1.2 + (p/0.7)*2.6 : 3.8 - ((p-0.7)/0.3)*1.3;
+function transitionCost(a, b, tol, target){
+  const bd = bpmDiff(a.bpm, b.bpm);
+  const kd = keyDist(camelot(a.key,a.mode), camelot(b.key,b.mode));
+  const moodSame = a.jev?.mood && a.jev.mood===b.jev?.mood ? 1 : 0;
+  const eb = energyOf(b);
+  const eCost = target!=null && eb!=null ? Math.abs(eb-target)*6 : (energyOf(a)!=null&&eb!=null ? Math.abs(energyOf(a)-eb)*3 : 2);
+  return (bd>tol ? 50 + bd : bd*1.5) + kd*6 - moodSame*3 + eCost;
+}
+let LAST_SET = null;
+function buildSet(len, tol, curve){
+  const pool = LIB.filter(t=>t.bpm);
+  if(!pool.length) return null;
+  const used = new Set(); let cur = pool[Math.floor(Math.random()*pool.length)];
+  const set=[cur]; used.add(cur.id);
+  while(set.length<len){
+    const target = curve ? targetEnergy(set.length/(len-1)) : null;
+    const cands = pool.filter(t=>!used.has(t.id)).map(t=>({t,c:transitionCost(cur,t,tol,target)})).sort((x,y)=>x.c-y.c);
+    if(!cands.length) break;
+    const top = cands.slice(0,3).filter(x=>x.c <= cands[0].c+4);
+    cur = top[Math.floor(Math.random()*top.length)].t; set.push(cur); used.add(cur.id);
+  }
+  return set;
+}
+const KD_LABEL = {0:'perfect',1:'harmonic',2:'+2 boost',3:'?',9:'clash'};
+function renderSet(){
+  const set = buildSet(+$('#setLen').value, +$('#bpmTol').value, $('#curve').checked);
+  LAST_SET = set;
+  if(!set){ $('#set').textContent='Нет треков с BPM — DJ-режиму нечего сводить.'; return; }
+  const rows = set.map((t,i)=>{
+    let tr='';
+    if(i){ const p=set[i-1]; const kd=keyDist(camelot(p.key,p.mode),camelot(t.key,t.mode)); const d=bpmDiff(p.bpm,t.bpm);
+      tr = `      ↓ ${d?'Δ'+d+' bpm':'same bpm'}, key ${KD_LABEL[kd]}\n`; }
+    return tr + `${String(i+1).padStart(2)}. ${line(t)}`;
+  });
+  const curve = set.map(t=>{const e=energyOf(t); return e==null?'·':'▁▂▃▅▇'[Math.max(0,Math.min(4,Math.round(e)))];}).join('');
+  $('#set').textContent = `Start: random → ${set.length} tracks\nEnergy: ${curve}\n\n` + rows.join('\n');
+}
+
+/* ================= generator (placeholder) ================= */
+function seedPrompt(){
+  const s = (LAST_SET||[]).slice(-3);
+  if(!s.length) return 'Сначала собери DJ-сет.';
+  const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
+  const bpm = avg(s.map(t=>t.bpm).filter(Boolean));
+  const last = s[s.length-1];
+  const e = avg(s.map(energyOf).filter(x=>x!=null));
+  return [
+    `Mood: ${last.jev?.mood||'?'}`,
+    `Tempo: ${bpm?Math.round(bpm):'?'} bpm`,
+    `Key: ${keyName(last)||'?'} (${camStr(camelot(last.key,last.mode))})`,
+    `Energy: ${e!=null?e.toFixed(1):'?'} / 4`,
+    `Vocals: ${last.jev?.vocal>0.6?'yes':'instrumental'}`,
+    `Reference: ${s.map(t=>`${t.artists[0]} — ${t.name}`).join('; ')}`,
+  ].join('\n');
+}
+
+/* ================= AI describe (Edge Function) ================= */
+function fmtAi(t){
+  const a=t.ai; if(!a) return '';
+  return `${t.artists.join(', ')} — ${t.name}\n  ${a.description||''}\n  mood: ${(a.mood||[]).join(', ')} · energy ${a.energy??'?'} · dance ${a.danceability??'?'} · slot ${a.dj_slot||'?'}\n  vocals: ${a.vocals||'?'} · instruments: ${(a.instruments||[]).join(', ')}\n  ~${a.tempo_bpm??'?'} bpm · ${a.key||'?'}${a.mix_notes?`\n  mix: ${a.mix_notes}`:''}`;
+}
+const AIP = {
+  steps: [
+    {key:'have',    label:'Уже описано',     src:'Supabase · tracks.ai',            what:'треки библиотеки с AI-описанием'},
+    {key:'preview', label:'Поиск превью',    src:'Deezer (ISRC → поиск) → iTunes',  what:'30-сек mp3/m4a'},
+    {key:'gemini',  label:'Описание звука',  src:'Gemini · слушает превью',         what:'описание, инструменты, вокал, mood, энергия, слот'},
+    {key:'save',    label:'Запись в базу',   src:'Supabase · Edge Function',        what:'tracks.ai'},
+  ].map(s=>({...s,status:'wait',total:null,done:0,cached:0,note:'',t0:0,t1:0})),
+  get(k){ return this.steps.find(s=>s.key===k); },
+  set(k,patch){ Object.assign(this.get(k),patch); this.render(); },
+  render(){ $('#aiRows').innerHTML = renderSteps(this.steps); },
+};
+function aiHave(){
+  const n = LIB.filter(t=>t.ai).length;
+  AIP.set('have',{status: SB_DESCRIBE_FN?'done':'skip', total:LIB.length, done:n, note: SB_DESCRIBE_FN?'':'функция describe не подключена'});
+}
+let AI_STOP=false;
+const aiLog = [];
+function aiLogPush(line){ dbg('[ai] '+line.split('\n')[0]); aiLog.unshift(line); $('#aiLog').textContent = aiLog.join('\n\n'); }
+async function aiDescribe(n){
+  if(!SB_DESCRIBE_FN || !LIB.length) return;
+  const pick = LIB.filter(t=>!t.ai).sort((a,b)=>(!!b.isrc)-(!!a.isrc)||Math.random()-.5).slice(0,n);
+  if(!pick.length){ aiHave(); return; }
+  AI_STOP=false; AI_RUNNING=true; ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=true); $('#aiStop').disabled=false;
+  const c = {tried:0, found:0, miss:0, ok:0, gfail:0, saved:0, pauses:0};
+  const now=Date.now();
+  AIP.set('preview',{status:'run',total:pick.length,done:0,note:'',t0:now,t1:0});
+  AIP.set('gemini', {status:'run',total:pick.length,done:0,note:'',t0:now,t1:0});
+  AIP.set('save',   {status:'run',total:pick.length,done:0,note:'',t0:now,t1:0});
+  const upd = (note='') => {
+    AIP.set('preview',{done:c.tried, note:`найдено ${c.found} · нет ${c.miss}`});
+    AIP.set('gemini', {total:Math.max(c.found,1), done:c.ok, note:(c.gfail?`ошибок ${c.gfail}`:'')+(note?` · ${note}`:'')});
+    AIP.set('save',   {total:Math.max(c.ok,1), done:c.saved});
+  };
+  const queue=[...pick];
+  while(queue.length && !AI_STOP){
+    const part=queue.splice(0,3);
+    try{
+      NET.req++;
+      const r = await fetch(`${SB_URL}/functions/v1/${SB_DESCRIBE_FN}`,{method:'POST',
+        headers:{apikey:SB_KEY,'content-type':'application/json','x-spotify-token':await accessToken()},
+        body:JSON.stringify({tracks:part.map(t=>({id:t.id,name:t.name,artists:t.artists,isrc:t.isrc,names:t.names}))})});
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(`${r.status}: ${j.error||''}`);
+      let wait=0;
+      for(const t of part){
+        const x=(j.results||[]).find(y=>y.id===t.id), who=`${t.artists[0]} — ${t.name}`;
+        if(x?.ai){ t.ai=x.ai; if(x.names) t.names=x.names; c.tried++; c.found++; c.ok++; if(x.saved) c.saved++; aiLogPush('✅ '+fmtAi(t)); }
+        else if(!x || x.retry){ queue.push(t); wait=Math.max(wait, x?.retry||30); aiLogPush(`⏸ ${who}: ${x?.error||'нет ответа по треку'} → в конец очереди`); }
+        else if(/^(no preview|preview )/.test(x.error||'')){ c.tried++; c.miss++; aiLogPush(`🔇 ${who}: ${x.error}`); }
+        else { c.tried++; c.found++; c.gfail++; aiLogPush(`✖ ${who}: ${x.error}`); }
+      }
+      upd();
+      if(wait){
+        if(++c.pauses>5){ upd(`квота не отпускает, осталось ${queue.length}`); aiLogPush(`⛔ стоп: 5 пауз подряд из-за квоты Gemini, не дошли ${queue.length}. Бесплатный лимит исчерпан — подожди или включи биллинг.`); break; }
+        for(let s=wait;s>0 && !AI_STOP;s--){ upd(`⏸ лимит Gemini, жду ${s}s`); await sleep(1000); }
+        upd();
+      }
+    }catch(e){ c.tried+=part.length; c.gfail+=part.length; aiLogPush('✖ батч упал: '+e.message); upd(); }
+    dbg(`[ai] batch done · ok ${c.ok} · miss ${c.miss} · gfail ${c.gfail} · queue ${queue.length}`);
+  }
+  const left = pick.length - c.tried;
+  const fin = st => ({status:st, t1:Date.now()});
+  AIP.set('preview', fin(c.miss&&!c.found?'err':'done'));
+  AIP.set('gemini',  {...fin(c.gfail&&!c.ok?'err':(left?'paused':'done')), note:`описано ${c.ok}${c.gfail?` · ошибок ${c.gfail}`:''}${left?` · не дошли ${left}${AI_STOP?' (стоп)':''}`:''}`});
+  AIP.set('save',    fin(c.ok&&c.saved<c.ok?'err':'done'));
+  LS.set('lib',LIB); renderList(); aiHave();
+  ['aiRun10','aiRun50','aiRunAll'].forEach(id=>$('#'+id).disabled=false); $('#aiStop').disabled=true; AI_RUNNING=false;
+}
+
+/* ================= wiring ================= */
+function showApp(tracks){ LIB=tracks; $('#app').hidden=false; renderList(); renderSet(); aiHave(); }
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  for(const k of ['lib','dj','gen']) $('#tab-'+k).hidden = b.dataset.tab!==k;
+});
+['#sortBy','#group','#q'].forEach(s=>$(s).addEventListener('input',renderList));
+$('#renew').onclick = renderSet; $('#setLen').onchange = renderSet; $('#bpmTol').onchange = renderSet; $('#curve').onchange = renderSet;
+$('#seedFromSet').onclick = () => { $('#genPrompt').value = seedPrompt(); };
+$('#login').onclick = login;
+$('#demo').onclick = () => { status('Demo: 60 фейковых треков (с фейковой Jev-разметкой)'); showApp(demoLibrary()); };
+$('#logout').onclick = () => { ['tok','lib','pkce.verifier','me'].forEach(LS.del); location.reload(); };
+$('#reload').onclick = () => runPipeline({refetchLikes:true});
+$('#reclassify').onclick = async () => { try{ await classifyJev(LIB,true); LS.set('lib',LIB); showApp(LIB); status('Jev: переразмечено');}catch(e){status('Ошибка: '+e.message)} };
+$('#aiRun10').onclick = () => aiDescribe(10);
+$('#aiRun50').onclick = () => aiDescribe(50);
+$('#aiRunAll').onclick = () => aiDescribe(1e9);
+$('#aiStop').onclick = () => { AI_STOP=true; $('#aiStop').disabled=true; };
+$('#aiLogCopy').onclick = e => { e.preventDefault(); copyText(dbgHeader()+'\n'+aiLog.slice().reverse().join('\n\n'), e.target); };
+$('#dbgCopy').onclick = e => { e.preventDefault(); copyText(dbgHeader()+'\n'+DBG.join('\n'), e.target); };
+$('#pipeToggle').onclick = () => { const h=!$('#pipeRows').hidden; $('#pipeRows').hidden=h; $('#aiGrp').hidden=h; $('#normGrp').hidden=h; $('#dbgWrap').hidden=h; $('#pipeToggle').textContent=h?'развернуть':'свернуть'; };
+setInterval(()=>{ if(PIPE_RUNNING) PIPE.render(); }, 1000); // тикает ETA
+let AI_RUNNING=false;
+setInterval(()=>{ // визуал: быстрее, когда что-то грузится; подпись = текущий статус
+  const busy = PIPE_RUNNING || AI_RUNNING;
+  window.LOADER?.setActive(busy);
+  const cap=$('#vizCap'); if(cap) cap.textContent = busy ? ($('#status').textContent||'loading…') : `${LIB.length.toLocaleString()} tracks · ${LIB.filter(t=>t.bpm).length.toLocaleString()} bpm · ${LIB.filter(t=>t.ai).length.toLocaleString()} ai`;
+}, 400);
+
+(async()=>{
+  try{
+    await detectBackend();
+    PIPE.render(); // сразу показываем, что и откуда будем тянуть
+    await handleCallback();
+    if(LS.get('tok')){
+      $('#reload').disabled=false; $('#reclassify').disabled=!BACKEND; $('#login').textContent='Reconnect';
+      await runPipeline(); // с кэшем: лайки не перетягиваем, догружаем только недостающее
+    }
+  }catch(e){ status('Ошибка: '+e.message); console.error(e); }
+})();
+</script>
+<script type="module">
+  import { mountLoader } from './loader.js';
+  try { window.LOADER = mountLoader(document.getElementById('loaderViz')); } catch(e){ console.warn('loader viz', e); }
+</script>
+</body>
+</html>
