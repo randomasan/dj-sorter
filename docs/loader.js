@@ -445,6 +445,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     return Math.min(1.2, calm + v);
   };
 
+  const BRAKE_SPEED = 0.35, BRAKE_MIN = 0.04;   // порог скорости курсора (px/мс) и остаточная скорость мыслей
+  let brake = 1;
   const clock = new THREE.Clock();
   let t = 0, boost = 1, boostTarget = 1, running = true;
   function animate() {
@@ -454,7 +456,13 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     boost += (boostTarget - boost) * Math.min(1, dt * 3);
     t += dt * boost;
     material.uniforms.uTime.value = t;
-    material.uniforms.uHotTime.value += dt * boost * (1.4 + material.uniforms.uPulse.value);
+    // торможение мыслей курсором: быстрее порога → мысли почти замирают (×0.04), остановился → разгоняются обратно
+    if (follow) {
+      const moving = performance.now() - lastMove < IDLE && !dragging;
+      const target = moving && speed > BRAKE_SPEED ? BRAKE_MIN : 1;
+      brake += (target - brake) * (1 - Math.exp(-dt * (target < brake ? 7 : 4)));   // тормоз ~0.3 с, разгон ~0.5 с
+    }
+    material.uniforms.uHotTime.value += dt * boost * (1.4 + material.uniforms.uPulse.value) * brake;
     if (thought) {
       material.uniforms.uPulse.value = pulseLevel(clock.elapsedTime);
     }
@@ -478,7 +486,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   return {
     setActive(on) { boostTarget = on ? 3.5 : 1; },
-    pulse(kind = 'thought') { spawn(kind); },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
+    pulse(kind = 'thought') { spawn(kind); },
+    _brake() { return brake; },   // импульс «мысли» по требованию: 'ripple' | 'thought' | 'insight'
     params,
   };
 }
