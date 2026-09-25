@@ -33,7 +33,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     dotLength: 0.01,
     dotDensity: 1.809,
     thoughtColor: '#4cb3ff',   // цвет «мыслей» (--info из кита)
-    thoughtLines: false,
+    thoughtLines: true,        // «мысль» в покое — голубые сигналы на густой сетке в центре (как было)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -175,7 +175,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
         currentPos = findStartPoint();
       }
     }
-    if (thought && params.thoughtLines) {   // старая «мысль» линиями — выключена, теперь облако точек (см. 7)
+    if (thought && params.thoughtLines) {
       const inHot = (p) => isPointInside(p, shapeType) && Math.random() < 0.15 + 0.85 * hotW(p);  // ближе к центру — гуще
       const startHot = () => {
         const p = new THREE.Vector3();
@@ -255,6 +255,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     uniform bool uUseFog;
     uniform vec3 colorThought;
     uniform float uPulse;       // 0..1 — вспышка «мысли»
+    uniform float uGather;      // 0..1 — насколько «мысль» ушла в конус
     varying float vDistance;
     varying float vHot;
     varying float vFace;
@@ -269,7 +270,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно colorDot
       vec3 dotC = mix(colorDot, colorThought, vHot);
       vec3 finalColor = mix(colorLine, max(dotC - uBgRaw, 0.0), signal);
-      finalColor *= 1.0 + vHot * uPulse * 2.2;                  // иногда ярче
+      finalColor *= 1.0 + vHot * uPulse * 2.2;
+      finalColor *= 1.0 - vHot * signal * uGather * 0.85;        // пока собирается конус, голубые сигналы на линиях гаснут                  // иногда ярче
       float finalAlpha = max(alpha, signal);
       gl_FragColor = vec4(finalColor, finalAlpha);
       if (uUseFog) {
@@ -290,6 +292,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       uBgRaw: { value: new THREE.Color().setStyle(params.backgroundColor, THREE.LinearSRGBColorSpace) },
       colorThought: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) },
       uPulse: { value: 0 },
+      uGather: { value: 0 },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -349,10 +352,11 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     const Rr = (x, y) => x + Math.random() * (y - x);
     if (tCloud) { rig.remove(tCloud.points); tCloud.points.geometry.dispose(); }
     const P = geo.attributes.position.array, H = geo.attributes.aHot.array;
+    let useHot = false; for (let i = 0; i < H.length; i++) if (H[i] > 0) { useHot = true; break; }
     const nodes = new Map(), K = (x, y, z) => x + ',' + y + ',' + z;
     const node = (x, y, z) => { const k = K(x, y, z); let n = nodes.get(k); if (!n) { n = { p: new THREE.Vector3(x, y, z), nb: [], w: 0 }; nodes.set(k, n); } return n; };
     for (let i = 0; i < P.length; i += 6) {
-      if (H[i / 3] > 0) continue;
+      if (useHot ? H[i / 3] <= 0 : H[i / 3] > 0) continue;   // точки живут на сетке «мысли»
       const a = node(P[i], P[i+1], P[i+2]), b = node(P[i+3], P[i+4], P[i+5]);
       if (!a.nb.includes(b)) { a.nb.push(b); b.nb.push(a); }
     }
@@ -540,9 +544,11 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       // яркость: покой — тихо мерцают и дышат вместе с «мыслью»; в конусе ярче, у вершины ярче всего
       const twk = 0.55 + 0.45 * Math.sin(now * q.tws + q.tw);
       const fade = i === 0 ? 1 : Math.min(1, q.u * 8, (1 - q.u) * 12 + 0.3 * (1 - e));
-      if (i === 0) { S[i] = 3 + 13 * e; B[i] = (0.5 + 0.6 * pulse) * (1 - e) + e * (1.9 + 0.2 * Math.sin(now * 9)); }
-      else { S[i] = 4.2 + 0.3 * e; B[i] = (0.6 + 0.35 * twk) * (0.75 + 0.9 * pulse) * (1 - e) + e * (0.9 + 0.3 * twk) * (0.4 + 0.6 * fade); }
+      // в покое точки не видны — «мысль» рисуют сигналы на линиях; видимы только по мере сбора в конус
+      if (i === 0) { S[i] = 3 + 13 * e; B[i] = e * (1.9 + 0.2 * Math.sin(now * 9)); }
+      else { S[i] = 3.4 + 0.8 * e; B[i] = e * (0.9 + 0.3 * twk) * (0.4 + 0.6 * fade); }
     }
+    material.uniforms.uGather.value = G;
     g.attributes.position.needsUpdate = true; g.attributes.aSize.needsUpdate = true; g.attributes.aBright.needsUpdate = true;
   }
 
