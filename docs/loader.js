@@ -34,7 +34,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     dotDensity: 1.809,
     thoughtColor: '#4cb3ff',   // цвет «мыслей» (--info из кита)
     thoughtLines: false,       // старый режим: «мысль» на отдельной густой сетке. Теперь — на тех же рёбрах, что и шум
-    thoughtRep: 0.3,           // период «мыслей» относительно шума (меньше → мыслей больше)
+    thoughtRep: 0.3,
+    centerBias: 0,             // 0..1: насколько общая сетка гуще к центру (0 — равномерно, как в пене)           // период «мыслей» относительно шума (меньше → мыслей больше)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -151,10 +152,14 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       for (let k = 0; k < 200; k++) {
         p.set((Math.random()-0.5)*26, (Math.random()-0.5)*26, (Math.random()-0.5)*26).round();
         p.x = Math.round(p.x/step)*step; p.y = Math.round(p.y/step)*step; p.z = Math.round(p.z/step)*step;
-        if (onlyExternal ? isSurface(p, shapeType, step) : isPointInside(p, shapeType)) return p;
+        if (!(onlyExternal ? isSurface(p, shapeType, step) : isPointInside(p, shapeType))) continue;
+        if (Math.random() > keep(p.length())) continue;               // старты чаще ближе к центру
+        return p;
       }
       return new THREE.Vector3(0,0,0);
     };
+    // плотнее к центру: шаг наружу принимается с вероятностью keep(r) (1 в центре → 1−centerBias у края)
+    const keep = (r) => 1 - params.centerBias * Math.min(1, r / 12);
 
     currentPos = findStartPoint();
     for (let i = 0; i < maxSegments; i++) {
@@ -165,6 +170,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       ];
       const nextPos = currentPos.clone().add(dirs[Math.floor(Math.random() * 6)]);
       const isValid = onlyExternal ? isSurface(nextPos, shapeType, step) : isPointInside(nextPos, shapeType);
+      if (isValid && params.centerBias > 0 && nextPos.lengthSq() > currentPos.lengthSq() && Math.random() > keep(nextPos.length())) { i--; continue; }
       if (isValid) {
         positions.push(currentPos.x, currentPos.y, currentPos.z, nextPos.x, nextPos.y, nextPos.z);
         attributes.push(currentDist, currentDist + step);
