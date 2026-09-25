@@ -229,13 +229,14 @@
   <p>Визуал «Trails in Forms» (sabosugi, <code>loader.js</code>) в цветах кита. На главной во время загрузки — <code>setActive(true)</code> (сигналы ×3.5), в конце уменьшается в лого transform'ом без ресайза canvas.</p>
   <div id="orbDemo"></div>
   <div class="row" style="margin-top:12px"><button class="btn btn--primary btn--sm" id="orbOn">setActive(true)</button><button class="btn btn--secondary btn--sm" id="orbOff">setActive(false)</button></div>
-<pre>mountLoader(el, { gui:false, follow:true, axes:true, params:{ backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2 } })</pre>
+<pre>mountLoader(el, { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Pac', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } })</pre>
 </section>
 
 <section id="log" style="border:0">
   <h2 class="t-h2">Журнал</h2>
   <p>Каждое изменение кита — строкой сюда (свежие сверху).</p>
   <table class="log">
+    <tr><td>2026-09-25</td><td>Шар: форма Pac — сфера с неглубоким «ртом» справа (±17°, глубиной до x>4.5) и маленьким «глазом». thought:true — «мысль»: участок внутри (центр −4,3,2, r 4.6) с густой сеткой, сигналами ×2.5 цвета --info #4cb3ff и вспышками раз в 2.5–6 с (или по ORB.pulse()).</td></tr>
     <tr><td>2026-09-25</td><td>Шар: мёртвая зона — реакция только на сдвиг курсора ≥6px (THRESH), IDLE 180 мс.</td></tr>
     <tr><td>2026-09-25</td><td>Шар: слежение мягче — наклон до ~22° (MAX_TILT 0.38), изинг 1.6→12/с, полная резкость при скорости курсора от 3.5 px/мс.</td></tr>
     <tr><td>2026-09-25</td><td>Шар: без автовращения, фронтально. follow:true — наклон к курсору (до ~31°) только пока мышь двигается, стоп → возврат домой; изинг экспоненциальный, чем быстрее курсор, тем резче (rate 2.2→22/с), возврат мягкий (2.4/с). axes:true — отладочные оси XYZ.</td></tr>
@@ -261,7 +262,7 @@
 <script type="module">
   import { mountLoader } from './loader.js';
   try{
-    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, follow:true, axes:true, params:{ backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2 } });
+    const o = mountLoader(document.getElementById('orbDemo'), { gui:false, follow:true, axes:true, thought:true, params:{ shape:'Pac', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff' } });
     document.getElementById('orbOn').onclick = ()=>o.setActive(true);
     document.getElementById('orbOff').onclick = ()=>o.setActive(false);
   }catch(e){ console.warn('orb', e); }

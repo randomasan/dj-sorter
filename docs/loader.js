@@ -9,7 +9,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 
 // follow:true — шар зафиксирован фронтально и наклоняется к курсору, пока мышь двигается; остановилась → плавно домой.
 // axes:true — оси XYZ внутри шара (для отладки).
-export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false } = {}) {
+// thought:true — «мысль в мозгу»: участок сетки внутри шара с более частыми сигналами своего цвета, иногда вспыхивает.
+export function mountLoader(container, { gui: withGui = true, params: over = {}, follow = false, axes = false, thought = false } = {}) {
   const W = () => container.clientWidth || 1, H = () => container.clientHeight || 1;
 
   // --- 1. Scene Setup ---
@@ -31,6 +32,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     speed: 0.1,
     dotLength: 0.01,
     dotDensity: 1.809,
+    thoughtColor: '#4cb3ff',   // цвет сигналов «мысли» (--info из кита)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -70,6 +72,14 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     switch (shapeType) {
       case 'Cube': return Math.abs(x) < r && Math.abs(y) < r && Math.abs(z) < r;
       case 'Sphere': return (x*x + y*y + z*z) < (r*r);
+      case 'Pac': {
+        // сфера с неглубоким «ртом» справа (клин ±17° в плоскости XY, от x>4.5 — не до центра) и маленьким «глазом» спереди-сверху
+        if ((x*x + y*y + z*z) >= r*r) return false;
+        if (x > 4.5 && Math.abs(Math.atan2(y, x)) < 0.3) return false;
+        const ex = x - 4, ey = y - 6, ez = z - 8;
+        if (ex*ex + ey*ey + ez*ez < 2.6*2.6) return false;
+        return true;
+      }
       case 'Pyramid': {
         if (y < -r || y > r) return false;
         const scale = (r - y) / (2 * r);
@@ -101,8 +111,10 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     return false;
   }
 
+  // «мысль»: сфера внутри формы, где сетка гуще (отдельные блуждания) и сигналы помечены aHot=1
+  const HOT = { c: new THREE.Vector3(-4, 3, 2), r: 4.6, segments: 900 };
   function createShapeGeometry(shapeType, onlyExternal) {
-    const positions = [], attributes = [];
+    const positions = [], attributes = [], hot = [];
     const step = 2, maxSegments = 6000;
     let currentPos = new THREE.Vector3(0, 0, 0);
     let currentDist = 0;
@@ -129,6 +141,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       if (isValid) {
         positions.push(currentPos.x, currentPos.y, currentPos.z, nextPos.x, nextPos.y, nextPos.z);
         attributes.push(currentDist, currentDist + step);
+        hot.push(0, 0);
         currentDist += step;
         currentPos.copy(nextPos);
       } else {
@@ -136,18 +149,45 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
         currentPos = findStartPoint();
       }
     }
+    if (thought) {
+      const inHot = (p) => p.distanceTo(HOT.c) < HOT.r && isPointInside(p, shapeType);
+      const startHot = () => {
+        const p = new THREE.Vector3();
+        for (let k = 0; k < 200; k++) {
+          p.set(HOT.c.x + (Math.random()-0.5)*2*HOT.r, HOT.c.y + (Math.random()-0.5)*2*HOT.r, HOT.c.z + (Math.random()-0.5)*2*HOT.r);
+          p.x = Math.round(p.x/step)*step; p.y = Math.round(p.y/step)*step; p.z = Math.round(p.z/step)*step;
+          if (inHot(p)) return p;
+        }
+        return HOT.c.clone();
+      };
+      let hp = startHot();
+      for (let i = 0; i < HOT.segments; i++) {
+        const d = [[step,0,0],[-step,0,0],[0,step,0],[0,-step,0],[0,0,step],[0,0,-step]][Math.floor(Math.random()*6)];
+        const np = hp.clone().add(new THREE.Vector3(...d));
+        if (inHot(np)) {
+          positions.push(hp.x, hp.y, hp.z, np.x, np.y, np.z);
+          attributes.push(currentDist, currentDist + step);
+          hot.push(1, 1);
+          currentDist += step; hp.copy(np);
+        } else { currentDist += 30.0; hp = startHot(); }
+      }
+    }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('lineDistance', new THREE.Float32BufferAttribute(attributes, 1));
+    geometry.setAttribute('aHot', new THREE.Float32BufferAttribute(hot, 1));
     return geometry;
   }
 
   // --- 4. Shader ---
   const vertexShader = `
     attribute float lineDistance;
+    attribute float aHot;
     varying float vDistance;
+    varying float vHot;
     void main() {
       vDistance = lineDistance;
+      vHot = aHot;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`;
   const fragmentShader = `
@@ -161,16 +201,22 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     uniform vec3 uFogColor;
     uniform float uFogDensity;
     uniform bool uUseFog;
+    uniform vec3 colorThought;
+    uniform float uPulse;       // 0..1 — вспышка «мысли»
     varying float vDistance;
+    varying float vHot;
     void main() {
-      float alpha = 0.2;
-      float distanceState = vDistance - uTime * uSpeed * 10.0;
-      float flow = mod(distanceState, uDotRepeat * 10.0);
-      float lengthVal = (uDotRepeat * 10.0) * uDotLength;
-      float signal = smoothstep((uDotRepeat * 10.0) - lengthVal, (uDotRepeat * 10.0), flow);
-      if (flow < (uDotRepeat * 10.0) - lengthVal) signal = 0.0;
+      float alpha = mix(0.2, 0.22, vHot);                       // участок «мысли» чуть заметнее
+      float rep = uDotRepeat * mix(1.0, 0.38, vHot) * 10.0;     // и сигналов там в ~2.5 раза больше
+      float distanceState = vDistance - uTime * uSpeed * 10.0 * mix(1.0, 1.4 + uPulse, vHot);
+      float flow = mod(distanceState, rep);
+      float lengthVal = rep * uDotLength;
+      float signal = smoothstep(rep - lengthVal, rep, flow);
+      if (flow < rep - lengthVal) signal = 0.0;
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно colorDot
-      vec3 finalColor = mix(colorLine, max(colorDot - uBgRaw, 0.0), signal);
+      vec3 dotC = mix(colorDot, colorThought, vHot);
+      vec3 finalColor = mix(colorLine, max(dotC - uBgRaw, 0.0), signal);
+      finalColor *= 1.0 + vHot * uPulse * 2.2;                  // иногда ярче
       float finalAlpha = max(alpha, signal);
       gl_FragColor = vec4(finalColor, finalAlpha);
       if (uUseFog) {
@@ -189,6 +235,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       // иначе зелёный из кита на экране уезжает в «кислотный»
       colorDot: { value: new THREE.Color().setStyle(params.dotColor, THREE.LinearSRGBColorSpace) },
       uBgRaw: { value: new THREE.Color().setStyle(params.backgroundColor, THREE.LinearSRGBColorSpace) },
+      colorThought: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) },
+      uPulse: { value: 0 },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -220,7 +268,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     rig.add(mesh);
   };
   const fGeo = gui.addFolder('Geometry');
-  fGeo.add(params, 'shape', ['Cube', 'Sphere', 'Pyramid', 'Hexagon', 'Torus']).name('Form Factor').onChange(rebuildGeo);
+  fGeo.add(params, 'shape', ['Cube', 'Sphere', 'Pac', 'Pyramid', 'Hexagon', 'Torus']).name('Form Factor').onChange(rebuildGeo);
   fGeo.add(params, 'onlyExternal').name('Only External').onChange(rebuildGeo);
   const fColors = gui.addFolder('Colors');
   fColors.addColor(params, 'backgroundColor').name('Background').onChange(val => {
@@ -277,6 +325,9 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     rig.rotation.set(cur.x, cur.y, 0);
   };
 
+  // вспышки «мысли»: раз в 2.5–6 с короткий импульс (быстрый рост, плавный спад)
+  let pulseT = -1, nextPulse = 2 + Math.random() * 3;
+
   const clock = new THREE.Clock();
   let t = 0, boost = 1, boostTarget = 1, running = true;
   function animate() {
@@ -286,6 +337,12 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     boost += (boostTarget - boost) * Math.min(1, dt * 3);
     t += dt * boost;
     material.uniforms.uTime.value = t;
+    if (thought) {
+      const now = clock.elapsedTime;
+      if (now > nextPulse) { pulseT = now; nextPulse = now + 2.5 + Math.random() * 3.5; }
+      const a = pulseT < 0 ? 99 : now - pulseT;
+      material.uniforms.uPulse.value = a < 0.15 ? a / 0.15 : Math.exp(-(a - 0.15) * 2.2);
+    }
     if (follow) followStep(dt);
     else { controls.autoRotateSpeed = 0.5 * boost; controls.update(); }
     if (params.useBloom) composer.render(); else renderer.render(scene, camera);
@@ -306,6 +363,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
 
   return {
     setActive(on) { boostTarget = on ? 3.5 : 1; },
+    pulse() { pulseT = clock.elapsedTime; },   // вспышка «мысли» по требованию
     params,
   };
 }
