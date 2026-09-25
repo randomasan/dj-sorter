@@ -33,7 +33,8 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     dotLength: 0.01,
     dotDensity: 1.809,
     thoughtColor: '#4cb3ff',   // цвет «мыслей» (--info из кита)
-    thoughtLines: true,        // «мысль» в покое — голубые сигналы на густой сетке в центре (как было)
+    thoughtLines: false,       // старый режим: «мысль» на отдельной густой сетке. Теперь — на тех же рёбрах, что и шум
+    thoughtRep: 0.3,           // период «мыслей» относительно шума (меньше → мыслей больше)
   };
   Object.assign(params, over);   // цвета из UI-кита (index.html передаёт свои)
 
@@ -167,7 +168,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       if (isValid) {
         positions.push(currentPos.x, currentPos.y, currentPos.z, nextPos.x, nextPos.y, nextPos.z);
         attributes.push(currentDist, currentDist + step);
-        hot.push(0, 0); face.push(0, 0);
+        hot.push(thought ? hotW(currentPos) : 0, thought ? hotW(nextPos) : 0); face.push(0, 0);   // вес «мысли» у общих рёбер
         currentDist += step;
         currentPos.copy(nextPos);
       } else {
@@ -259,20 +260,23 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     varying float vDistance;
     varying float vHot;
     varying float vFace;
+    uniform float uThoughtRep;
+    // бегущая волна вдоль ребра: голова на конце периода, хвост длиной uDotLength·период
+    float wave(float d, float rep) {
+      float f = mod(d, rep), L = rep * uDotLength;
+      return f < rep - L ? 0.0 : smoothstep(rep - L, rep, f);
+    }
     void main() {
-      float alpha = mix(0.2, 0.22, vHot);                       // «мысль» чуть заметнее; лицо — тем же цветом, что и всё
-      float rep = uDotRepeat * mix(1.0, 0.38, vHot) * 10.0;     // и сигналов там в ~2.5 раза больше
-      float distanceState = vDistance - mix(uTime, uHotTime, vHot) * uSpeed * 10.0;
-      float flow = mod(distanceState, rep);
-      float lengthVal = rep * uDotLength;
-      float signal = smoothstep(rep - lengthVal, rep, flow);
-      if (flow < rep - lengthVal) signal = 0.0;
-      // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно colorDot
-      vec3 dotC = mix(colorDot, colorThought, vHot);
-      vec3 finalColor = mix(colorLine, max(dotC - uBgRaw, 0.0), signal);
-      finalColor *= 1.0 + vHot * uPulse * 2.2;
-                  // иногда ярче
-      float finalAlpha = max(alpha, signal);
+      // две связные системы на ОДНИХ и тех же рёбрах:
+      //   шум   — зелёные сигналы, свой период и общее время uTime
+      //   мысли — голубые сигналы, короче период, своё время uHotTime (быстрее, реагирует на импульсы),
+      //           видимость = вес vHot (1 в центре → 0 к краю)
+      float sN = wave(vDistance - uTime * uSpeed * 10.0, uDotRepeat * 10.0);
+      float sT = wave(vDistance + 7.3 - uHotTime * uSpeed * 10.0, uDotRepeat * 10.0 * uThoughtRep) * vHot;
+      // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно своего цвета
+      vec3 finalColor = mix(colorLine, max(colorDot - uBgRaw, 0.0), sN);
+      finalColor = mix(finalColor, max(colorThought - uBgRaw, 0.0) * (1.0 + uPulse * 2.2), sT);   // мысль поверх шума, иногда ярче
+      float finalAlpha = max(0.2, max(sN, sT));
       gl_FragColor = vec4(finalColor, finalAlpha);
       if (uUseFog) {
         float depth = gl_FragCoord.z / gl_FragCoord.w;
@@ -293,6 +297,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       colorThought: { value: new THREE.Color().setStyle(params.thoughtColor, THREE.LinearSRGBColorSpace) },
       uPulse: { value: 0 },
       uHotTime: { value: 0 },
+      uThoughtRep: { value: params.thoughtRep },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
