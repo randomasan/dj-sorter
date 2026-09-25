@@ -258,8 +258,10 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
     uniform vec3 colorLine;
     uniform vec3 colorDot;
     uniform float uReveal;      // интро: радиус фронта постройки сетки (≥14 — сетка целиком)
-    uniform float uNoiseOn;     // интро: включение шума 0..1
-    uniform float uThoughtOn;   // интро: включение мыслей 0..1
+    uniform float uNoiseAge;    // интро: секунд с начала «рождения» шума (большое — все рождены)
+    uniform float uThoughtAge;  // интро: то же для мыслей
+    uniform float uBirthN;      // окно рождений шума, с: каждая частица рождается в свой момент внутри окна
+    uniform float uBirthT;      // окно рождений мыслей, с
     varying float vR;
     uniform vec3 uBgRaw;
     uniform float uTime;
@@ -287,15 +289,24 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       //   шум   — зелёные сигналы, свой период и общее время uTime
       //   мысли — голубые сигналы, короче период, своё время uHotTime (быстрее, реагирует на импульсы),
       //           видимость = вес vHot (1 в центре → 0 к краю)
-      float sN = wave(vDistance - uTime * uSpeed * 10.0, uDotRepeat * 10.0);
+      // шум: у каждой частицы свой id (номер волны на пути) → свой момент рождения.
+      // Рождение: вспышка-точка на месте головы, хвост вырастает из неё до полной длины за ~0.45 с
+      float dN = vDistance - uTime * uSpeed * 10.0, repN = uDotRepeat * 10.0;
+      float idN = floor(dN / repN), fN = mod(dN, repN);
+      float ageN = uNoiseAge - hash(idN + 3.3) * uBirthN;
+      float LN = repN * uDotLength * mix(0.03, 1.0, smoothstep(0.0, 0.45, ageN));
+      float sN = step(0.0, ageN) * (fN < repN - LN ? 0.0 : smoothstep(repN - LN, repN, fN));
+      float flashN = step(0.0, ageN) * exp(-max(ageN, 0.0) * 5.0) * smoothstep(repN - LN * 0.5, repN, fN);
       // мысли — «кванты»: у каждой свой id (номер волны на пути) и по нему свои случайные свойства
       float dT = vDistance + 7.3 - uHotTime * uSpeed * 10.0;
       float repT = uDotRepeat * 10.0 * uThoughtRep;
       float id = floor(dT / repT), f = mod(dT, repT);
       float h1 = hash(id), h2 = hash(id + 17.1), h3 = hash(id + 31.7), h4 = hash(id + 53.3), h5 = hash(id + 71.9);
       // длина: от короткой искры до длинного хвоста (чаще короткие)
-      float L = repT * mix(0.05, 0.8, h4 * h4);
-      float sT = f < repT - L ? 0.0 : smoothstep(repT - L, repT, f);
+      float ageT = uThoughtAge - hash(id + 91.3) * uBirthT;   // момент рождения мысли (интро)
+      float L = repT * mix(0.05, 0.8, h4 * h4) * mix(0.03, 1.0, smoothstep(0.0, 0.45, ageT));
+      float sT = step(0.0, ageT) * (f < repT - L ? 0.0 : smoothstep(repT - L, repT, f));
+      float flashT = step(0.0, ageT) * exp(-max(ageT, 0.0) * 5.0) * smoothstep(repT - L * 0.5, repT, f);
       // жизнь: свой цикл 1.5–5 ед., рождение (быстрое появление) → жизнь (25–80% цикла) → смерть (угасание)
       float ph = fract(uHotTime * 0.35 / mix(1.5, 5.0, h2) + h1);
       float duty = mix(0.25, 0.8, h3);
@@ -307,12 +318,14 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       // интро: сетка строится от центра фронтом uReveal (яркая зелёная кромка), потом включаются шум и мысли
       float rev = 1.0 - smoothstep(uReveal - 1.0, uReveal, vR);
       float front = rev * smoothstep(uReveal - 2.2, uReveal - 0.3, vR) * step(uReveal, 13.9);
-      sN *= uNoiseOn * rev; sT *= uThoughtOn * rev;
+      sN *= rev; sT *= rev; flashN *= rev; flashT *= rev * dens;
       // additive-блендинг прибавляет фон: вычитаем его, чтобы голова сигнала на фоне была ровно своего цвета
       vec3 finalColor = mix(colorLine, max(colorDot - uBgRaw, 0.0), sN);
       finalColor = mix(finalColor, max(colorThought - uBgRaw, 0.0) * (1.0 + uPulse * 2.2), sT);   // мысль поверх шума, иногда ярче
       finalColor = mix(finalColor, max(colorDot - uBgRaw, 0.0), front);
-      float finalAlpha = max(0.2 * rev, max(max(sN, sT), front * 0.9));
+      // вспышка рождения: голова новорождённой частицы на миг светлеет к белому
+      finalColor = mix(finalColor, vec3(1.0), clamp(flashN * 0.7 + flashT * 0.7, 0.0, 0.85));
+      float finalAlpha = max(0.2 * rev, max(max(max(sN, sT), front * 0.9), max(flashN, flashT)));
       gl_FragColor = vec4(finalColor, finalAlpha);
       if (uUseFog) {
         float depth = gl_FragCoord.z / gl_FragCoord.w;
@@ -334,7 +347,7 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       uPulse: { value: 0 },
       uHotTime: { value: 0 },
       uThoughtRep: { value: params.thoughtRep },
-      uReveal: { value: 100 }, uNoiseOn: { value: 1 }, uThoughtOn: { value: 1 },
+      uReveal: { value: 100 }, uNoiseAge: { value: 1e4 }, uThoughtAge: { value: 1e4 }, uBirthN: { value: 1.2 }, uBirthT: { value: 1.4 },
       uTime: { value: 0 },
       uSpeed: { value: params.speed },
       uDotLength: { value: params.dotLength },
@@ -479,12 +492,13 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
   let brake = 1;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let introLeft = typeof intro === 'number' && intro > 0 && !reduced;
-  // вариант 2 «постройка»: тайминг (с) — точка 0–0.4, сетка 0.4–2.2, шум 2.2–2.8, мысли 2.8–3.6
-  const BUILD = { dot: 0.4, grow: 1.8, noise: 0.6, thought: 0.8 };
+  // вариант 2 «постройка»: тайминг (с) — точка 0–0.4, сетка 0.4–2.2, рождение шума 2.2–3.4, рождение мыслей 3.4–4.8
+  // (каждая частица рождается в свой случайный момент окна: вспышка-точка → хвост вырастает)
+  const BUILD = { dot: 0.4, grow: 1.8, noise: 1.2, thought: 1.4 };
   let buildLeft = intro === 'build' && !reduced;
   let seed = null;
   if (buildLeft) {
-    material.uniforms.uReveal.value = 0; material.uniforms.uNoiseOn.value = 0; material.uniforms.uThoughtOn.value = 0;
+    material.uniforms.uReveal.value = 0; material.uniforms.uNoiseAge.value = -1; material.uniforms.uThoughtAge.value = -1; material.uniforms.uBirthN.value = BUILD.noise; material.uniforms.uBirthT.value = BUILD.thought;
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
     seed = new THREE.Points(g, new THREE.ShaderMaterial({
       uniforms: { uA: { value: 0 }, uS: { value: 0 }, uC: { value: new THREE.Color().setStyle(params.dotColor, THREE.LinearSRGBColorSpace) } },
@@ -523,9 +537,9 @@ export function mountLoader(container, { gui: withGui = true, params: over = {},
       seed.material.uniforms.uA.value = clamp01(T / BUILD.dot) * (1 - clamp01(tN));
       seed.material.uniforms.uS.value = (22 + 6 * Math.sin(T * 9)) * px * (1 - 0.4 * clamp01(tGrow));
       u.uReveal.value = ease(clamp01(tGrow)) * 14;
-      u.uNoiseOn.value = clamp01(tN);
-      u.uThoughtOn.value = clamp01(tT);
-      if (tT >= 1) { buildLeft = false; u.uReveal.value = 100; rig.remove(seed); seed.geometry.dispose(); seed.material.dispose(); }
+      u.uNoiseAge.value = tN * BUILD.noise;
+      u.uThoughtAge.value = tT * BUILD.thought;
+      if (tT >= 1.5) { buildLeft = false; u.uReveal.value = 100; u.uNoiseAge.value = 1e4; u.uThoughtAge.value = 1e4; rig.remove(seed); seed.geometry.dispose(); seed.material.dispose(); }
     }
     if (introLeft) {
       // появление: масштаб 0 → 1 (easeOutCubic) и доворот на 1.25 оборота вокруг Y, который гасится к концу

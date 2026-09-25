@@ -204,7 +204,7 @@ addEventListener('scroll', ()=>$('#top').classList.toggle('is-solid', scrollY > 
   const stage = (sel) => document.querySelectorAll(sel).forEach(el => el.classList.add('is-in'));
   const reveal = () => { stage('#top, #heroTitle'); setTimeout(() => stage('#feed'), 450); };
   try { window.ORB = mountLoader(document.getElementById('orb'), { intro:'build', gui:false, follow:true, axes:false, thought:true, params:{ shape:'Sphere', backgroundColor:'#121212', lineColor:'#535353', dotColor:'#1ed760', dotLength:0.2, thoughtColor:'#4cb3ff', centerBias:0.3, segments:9000 } }); } catch(e){ console.warn('orb', e); }
-  setTimeout(reveal, 2800);   // заголовок и лого — когда сетка построена и пошёл шум
+  setTimeout(reveal, 3000);   // заголовок и лого — когда сетка построена и рождается шум
 </script>
 </body>
 </html>
