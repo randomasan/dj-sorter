@@ -23,8 +23,7 @@
   #steps{justify-content:center;margin-top:var(--sp-4);gap:var(--sp-2)}
   #pNote{min-height:1.4em;margin-top:var(--sp-2);text-align:center}
 
-  #lib{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:calc(200px + env(safe-area-inset-top,0px)) var(--sp-4) var(--sp-7);opacity:0;transition:opacity .8s .5s}
-  body.logo #lib{opacity:1}
+  #lib{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:calc(200px + env(safe-area-inset-top,0px)) var(--sp-4) var(--sp-7)}
   .libhead{display:flex;flex-wrap:wrap;gap:var(--sp-4);align-items:flex-end;justify-content:space-between;margin-bottom:var(--sp-4)}
   #sorts{margin-bottom:var(--sp-4)}
   #more{display:flex;margin:var(--sp-5) auto 0}
@@ -134,7 +133,7 @@ async function start(){
     const tracks = await DJ.run(onStep);
     $('#pLabel').textContent = 'Готово'; $('#pCnt').textContent = `${tracks.length.toLocaleString()} треков`; $('#pBar').style.width='100%';
     setLoading(false);
-    await new Promise(r=>setTimeout(r,700));
+    await new Promise(r=>setTimeout(r,500));
     showLibrary(tracks);
   }catch(e){
     setLoading(false);
@@ -163,8 +162,16 @@ addEventListener('resize', orbTarget);
 function showLibrary(tracks){
   LIB = tracks.map((t,i)=>({...t,_n:i+1}));
   orbTarget();
-  document.body.classList.add('logo');
-  $('#prog').hidden = true; $('#lib').hidden = false;
+  // 1) лоадер уходит (.a-out) → 2) шар уезжает в лого → 3) таблица въезжает снизу под шаром (.a-rise)
+  const pr = $('#prog'), lib = $('#lib');
+  let went = false;
+  const next = () => {
+    if(went) return; went = true;
+    pr.hidden = true; pr.classList.remove('a-out', 'a-in');
+    document.body.classList.add('logo');
+    setTimeout(() => { lib.hidden = false; lib.classList.add('a-rise'); }, 500);
+  };
+  if(pr.hidden) next(); else { pr.classList.add('a-out'); pr.addEventListener('animationend', next, { once: true }); setTimeout(next, 900); }
   $('#libStat').textContent = `${LIB.length.toLocaleString()} треков · BPM у ${LIB.filter(t=>t.bpm).length.toLocaleString()}`;
   render();
 }
